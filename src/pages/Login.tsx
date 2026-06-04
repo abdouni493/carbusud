@@ -304,21 +304,6 @@ const Login = ({ onLogin }: LoginProps) => {
                   </button>
                 </form>
 
-                {/* Divider */}
-                <div className="relative my-6">
-                  <div className="absolute inset-0 flex items-center"><div className="w-full h-px bg-slate-100" /></div>
-                  <div className="relative flex justify-center">
-                    <span className="px-3 bg-white text-xs text-slate-400 font-medium">ou</span>
-                  </div>
-                </div>
-
-                {/* Create admin account button */}
-                <button onClick={switchToSignup}
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-[#003087]/15 text-[#003087] font-bold text-sm hover:bg-[#003087]/5 hover:border-[#003087]/30 transition-all duration-200">
-                  <UserPlus className="w-4 h-4" />
-                  Créer un compte Administrateur
-                </button>
-
                 <p className="text-center text-[10px] text-slate-300 mt-5">
                   {stationName} · Connexion sécurisée via Supabase
                 </p>
