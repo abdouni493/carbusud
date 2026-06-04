@@ -6,7 +6,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import {
-  Brigade, Pump, Tank, Pompiste, BrigadeChef, PumpNozzle, Track, ShopSale, StationSettings, BrigadeAccounting
+  Brigade, Pump, Tank, Pompiste, BrigadeChef, PumpNozzle, Track, ShopSale, StationSettings, BrigadeAccounting, Client
 } from "../store/AppContext";
 
 interface Props {
@@ -20,6 +20,7 @@ interface Props {
   shopSales: ShopSale[];
   settings: StationSettings;
   accounting?: BrigadeAccounting;
+  clients: Client[];
   onClose: () => void;
 }
 
@@ -35,7 +36,7 @@ const SECTIONS = [
 
 const BrigadeDetailModal: React.FC<Props> = ({
   brigade, pumps, tanks, pompistes, brigadeChefs, pumpNozzles, tracks,
-  shopSales, settings, accounting, onClose
+  shopSales, settings, accounting, clients, onClose
 }) => {
   const [activeSection, setActiveSection] = useState('info');
   const chef = brigadeChefs.find(c => c.id === brigade.chefId);
@@ -322,12 +323,22 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       {(accounting.justifications || []).length > 0 && (
                         <div className="space-y-2">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justifications Clients</p>
-                          {(accounting.justifications || []).map(j => (
-                            <div key={j.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-100">
-                              <span className="text-sm font-bold text-slate-700">{j.clientId}</span>
-                              <span className="font-black text-blue-700">{j.amount.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</span>
-                            </div>
-                          ))}
+                          {(accounting.justifications || []).map(j => {
+                            const client = clients.find(c => c.id === j.clientId);
+                            return (
+                              <div key={j.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-100">
+                                <div>
+                                  <span className="text-sm font-bold text-slate-700">{client?.name || j.clientId}</span>
+                                  {client && (
+                                    <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                                      {client.type} · {client.paymentMode}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-black text-blue-700">{j.amount.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</span>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

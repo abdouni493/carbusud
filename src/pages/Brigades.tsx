@@ -2041,6 +2041,7 @@ const Brigades = () => {
             shopSales={shopSales}
             settings={settings}
             accounting={brigadeAccountings.find(a => a.brigadeId === selectedBrigade.id)}
+            clients={clients}
             onClose={() => { setShowDetail(false); setSelectedBrigade(null); setDetailTab('info'); }}
           />
         )}

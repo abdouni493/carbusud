@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import { ToastMessage, ToastType } from '../components/Toast';
 import { db, supabase, subscribeTable, uploadFile, uploadBase64, BUCKETS } from '../lib/supabase';
+import { newId } from '../lib/utils';
 
 // ─── Null-or-zero sanitizer ────────────────────────────────────────────────────
 // Converts empty-string or undefined to null so optional UUID / date FK columns
@@ -54,6 +55,15 @@ export interface PumpNozzle {
 export interface Track {
   id: string;
   name: string;
+}
+
+export interface Driver {
+  id: string;
+  name: string;
+  status?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
 }
 
 export interface Acompte {
@@ -645,7 +655,7 @@ export interface AppState {
   gerants: GerantWorker[];
   magasinWorkers: MagasinWorker[];
   productBrands: ProductBrand[];
-  drivers: { id: string; name: string }[];
+  drivers: Driver[];
   currentUserRole: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin';
   currentUserId?: string;
   currentUserName?: string;
@@ -737,7 +747,7 @@ type AppAction =
   | { type: 'LOG_ACTIVITY'; payload: { userId: string; action: string; details: string } }
   | { type: 'SET_SETTINGS'; payload: StationSettings }
   | { type: 'ADD_BRIGADE'; payload: Brigade }
-  | { type: 'ADD_DRIVER'; payload: { id: string; name: string } }
+  | { type: 'ADD_DRIVER'; payload: Driver }
   | { type: 'DELETE_DRIVER'; payload: string }
   | { type: 'UPDATE_BRIGADE'; payload: Brigade }
   | { type: 'DELETE_BRIGADE'; payload: string }
@@ -994,7 +1004,16 @@ function mapPump(r: any): Pump {
   return { id: r.id, number: r.number, name: r.name, tankId: r.tank_id, trackId: r.track_id, type: r.type, lastIndex: +r.last_index, status: r.status, currentBrigadeStartIndex: r.current_brigade_start_index ? +r.current_brigade_start_index : undefined };
 }
 function mapTrack(r: any): Track { return { id: r.id, name: r.name }; }
-function mapDriver(r: any) { return { id: r.id, name: r.name }; }
+function mapDriver(r: any): Driver {
+  return {
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    phone: r.phone,
+    email: r.email,
+    address: r.address,
+  };
+}
 function mapSupplier(r: any): Supplier {
   return { id: r.id, ref: r.ref, name: r.name, contact: r.contact, phone: r.phone, email: r.email, address: r.address, balance: +r.balance, totalPurchases: +r.total_purchases, nif: r.nif, nis: r.nis, article: r.article, rc: r.rc, type: r.type, appointments: [], debtPayments: [] };
 }
@@ -1193,11 +1212,67 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         const a = action.payload;
         await db.addBrigadeAccounting({ id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
         if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: j.accountingId, client_id: j.clientId, amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        // Save décalage history entries for each pompiste that has a décalage
+        if (a.decalageSummary && Object.keys(a.decalageSummary).length > 0) {
+          const decalagePromises = Object.entries(a.decalageSummary).map(([pompisteId, d]: [string, any]) => {
+            if (Math.abs(d.money) < 0.01) return Promise.resolve();
+            return db.addDecalageHistory({
+              id: newId(),
+              pompiste_id: pompisteId,
+              brigade_id: a.brigadeId,
+              date: new Date().toISOString().split('T')[0],
+              amount: Math.abs(d.money),
+              type: d.money < 0 ? 'BONUS' : 'RETENUE',
+            });
+          });
+          // Also save rest-assigned worker décalage if present
+          if (a.restAssignedWorkerId && Math.abs(a.restAssignedAmount || 0) > 0.01) {
+            decalagePromises.push(
+              db.addDecalageHistory({
+                id: newId(),
+                pompiste_id: a.restAssignedWorkerId,
+                brigade_id: a.brigadeId,
+                date: new Date().toISOString().split('T')[0],
+                amount: Math.abs(a.restAssignedAmount || 0),
+                type: (a.rest || 0) < 0 ? 'BONUS' : 'RETENUE',
+              })
+            );
+          }
+          await Promise.allSettled(decalagePromises);
+        }
         break;
       }
       case 'UPDATE_BRIGADE_ACCOUNTING': {
         const a = action.payload;
         await db.updateBrigadeAccounting(a.id, { brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
+        // Re-sync décalage history for this brigade (delete old, then re-insert)
+        await supabase.from('pompiste_decalage_history').delete().eq('brigade_id', a.brigadeId);
+        if (a.decalageSummary && Object.keys(a.decalageSummary).length > 0) {
+          const decalagePromises = Object.entries(a.decalageSummary).map(([pompisteId, d]: [string, any]) => {
+            if (Math.abs(d.money) < 0.01) return Promise.resolve();
+            return db.addDecalageHistory({
+              id: newId(),
+              pompiste_id: pompisteId,
+              brigade_id: a.brigadeId,
+              date: new Date().toISOString().split('T')[0],
+              amount: Math.abs(d.money),
+              type: d.money < 0 ? 'BONUS' : 'RETENUE',
+            });
+          });
+          if (a.restAssignedWorkerId && Math.abs(a.restAssignedAmount || 0) > 0.01) {
+            decalagePromises.push(
+              db.addDecalageHistory({
+                id: newId(),
+                pompiste_id: a.restAssignedWorkerId,
+                brigade_id: a.brigadeId,
+                date: new Date().toISOString().split('T')[0],
+                amount: Math.abs(a.restAssignedAmount || 0),
+                type: (a.rest || 0) < 0 ? 'BONUS' : 'RETENUE',
+              })
+            );
+          }
+          await Promise.allSettled(decalagePromises);
+        }
         break;
       }
       case 'ADD_FUEL_SALE':
@@ -1370,7 +1445,7 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         if (data) await supabase.from('products').update({ stock: (+data.stock) + action.payload.quantity, buy_price: action.payload.buyPrice ?? data.buy_price, selling_price: action.payload.sellPrice ?? data.selling_price }).eq('id', action.payload.productId);
         break;
       }
-      case 'ADD_DRIVER': await db.addDriver({ id: action.payload.id, name: action.payload.name }); break;
+      case 'ADD_DRIVER': await db.addDriver({ id: action.payload.id, name: action.payload.name, status: action.payload.status ?? 'Actif', phone: action.payload.phone ?? null, email: action.payload.email ?? null, address: action.payload.address ?? null }); break;
       case 'DELETE_DRIVER': await db.deleteDriver(action.payload); break;
       case 'LOG_ACTIVITY': await db.addActivityLog({ user_id: action.payload.userId, action: action.payload.action, details: action.payload.details }); break;
       default: break;
@@ -1922,11 +1997,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const dailyReports = (dailyReportsRaw as any[]).map(mapDailyReport);
 
         // Merge payroll sub-records into workers (reuses Phase 1 raw arrays)
+        const decalageHistoryRaw = await supabase
+          .from('pompiste_decalage_history')
+          .select('*')
+          .then(r => r.data ?? []);
+
         const pompistesWithPayroll = (pompistesRaw as any[]).map(p => {
           const m = mapPompiste(p);
           m.acomptes      = (acomptesRaw      as any[]).filter(a => a.worker_id === p.id && a.worker_type === 'pompiste').map(mapAcompte);
           m.absences      = (absencesRaw      as any[]).filter(a => a.worker_id === p.id && a.worker_type === 'pompiste').map(mapAbsence);
           m.paymentRecord = (paymentRecordsRaw as any[]).filter(r => r.worker_id === p.id && r.worker_type === 'pompiste').map(mapPaymentRecord);
+          m.decalageHistory = (decalageHistoryRaw as any[])
+            .filter(d => d.pompiste_id === p.id)
+            .map(d => ({
+              brigadeId: d.brigade_id,
+              date: d.date,
+              amount: +d.amount,
+              type: d.type as 'BONUS' | 'RETENUE',
+            }));
           return m;
         });
 

@@ -61,6 +61,43 @@ const BrigadeAccountingModal: React.FC<Props> = ({
   const [restAssignedWorkerType, setRestAssignedWorkerType] = useState(existingAccounting?.restAssignedWorkerType || '');
   const [restAssignedWorkerId, setRestAssignedWorkerId] = useState(existingAccounting?.restAssignedWorkerId || '');
 
+  // ── Create-new-client (inline) ───────────────────────────────────────────────
+  const [showCreateClientModal, setShowCreateClientModal] = useState(false);
+  const [newClientForm, setNewClientForm] = useState({
+    name: '', phone: '', type: 'PARTICULIER' as 'PARTICULIER' | 'ENTREPRISE',
+    paymentMode: 'CASH' as 'CASH' | 'CREDIT' | 'ADVANCE',
+    cin: '', email: '', address: '',
+  });
+
+  const handleCreateClient = () => {
+    if (!newClientForm.name.trim()) return;
+    const clientId = newId();
+    const newClient = {
+      id: clientId,
+      name: newClientForm.name,
+      phone: newClientForm.phone || undefined,
+      cin: newClientForm.cin || undefined,
+      email: newClientForm.email || undefined,
+      address: newClientForm.address || undefined,
+      type: newClientForm.type,
+      paymentMode: newClientForm.paymentMode,
+      balance: 0,
+      debt: 0,
+      creditLimit: 0,
+      paymentDelay: 30,
+      advanceBalance: 0,
+      transactionHistory: [],
+    };
+    dispatch({ type: 'ADD_CLIENT', payload: newClient });
+    // Auto-select the new client
+    setSelectedClientId(clientId);
+    setClientSearch(newClientForm.name);
+    // Reset form and close modal
+    setNewClientForm({ name: '', phone: '', type: 'PARTICULIER', paymentMode: 'CASH', cin: '', email: '', address: '' });
+    setShowCreateClientModal(false);
+    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: `Client "${newClientForm.name}" créé et sélectionné` } });
+  };
+
   // ── Derived: active nozzles ──────────────────────────────────────────────────
   const activeNozzles = useMemo(() => {
     if (brigade.activeNozzleIds && brigade.activeNozzleIds.length > 0)
@@ -506,11 +543,19 @@ const BrigadeAccountingModal: React.FC<Props> = ({
 
                   {/* Client search */}
                   <div className="p-4 bg-blue-50 rounded-2xl border border-blue-200 space-y-3">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input type="text" placeholder="Rechercher un client..." value={clientSearch}
-                        onChange={e => { setClientSearch(e.target.value); setSelectedClientId(''); }}
-                        className="w-full pl-9 pr-4 py-2.5 border border-blue-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                    <div className="flex gap-2 items-center">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input type="text" placeholder="Rechercher un client..." value={clientSearch}
+                          onChange={e => { setClientSearch(e.target.value); setSelectedClientId(''); }}
+                          className="w-full pl-9 pr-4 py-2.5 border border-blue-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                      </div>
+                      <button
+                        onClick={() => setShowCreateClientModal(true)}
+                        className="flex items-center gap-1.5 px-3 py-2.5 bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-800 transition-colors shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Nouveau Client
+                      </button>
                     </div>
                     {clientSearch && (
                       <div className="space-y-1">
@@ -620,6 +665,81 @@ const BrigadeAccountingModal: React.FC<Props> = ({
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 10px; }
       `}</style>
+
+      {/* Create-new-client mini-modal */}
+      <AnimatePresence>
+        {showCreateClientModal && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowCreateClientModal(false)}
+              className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+              className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 overflow-hidden border border-slate-100">
+              <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white px-5 py-4 flex items-center justify-between">
+                <h3 className="font-black text-sm uppercase tracking-widest">Nouveau Client</h3>
+                <button onClick={() => setShowCreateClientModal(false)} className="p-1.5 hover:bg-white/20 rounded-lg"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="p-5 space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Nom *</label>
+                  <input type="text" value={newClientForm.name}
+                    onChange={e => setNewClientForm(f => ({ ...f, name: e.target.value }))}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="Nom du client" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Téléphone</label>
+                    <input type="text" value={newClientForm.phone}
+                      onChange={e => setNewClientForm(f => ({ ...f, phone: e.target.value }))}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                      placeholder="0555..." />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">CIN</label>
+                    <input type="text" value={newClientForm.cin}
+                      onChange={e => setNewClientForm(f => ({ ...f, cin: e.target.value }))}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                      placeholder="CIN" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Type</label>
+                    <select value={newClientForm.type}
+                      onChange={e => setNewClientForm(f => ({ ...f, type: e.target.value as any }))}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+                      <option value="PARTICULIER">Particulier</option>
+                      <option value="ENTREPRISE">Entreprise</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Mode Paiement</label>
+                    <select value={newClientForm.paymentMode}
+                      onChange={e => setNewClientForm(f => ({ ...f, paymentMode: e.target.value as any }))}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+                      <option value="CASH">Comptant</option>
+                      <option value="CREDIT">Crédit</option>
+                      <option value="ADVANCE">Avances</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button onClick={() => setShowCreateClientModal(false)}
+                    className="flex-1 py-2.5 border-2 border-slate-200 rounded-xl text-[10px] font-black uppercase text-slate-600 hover:bg-slate-50">
+                    Annuler
+                  </button>
+                  <button onClick={handleCreateClient}
+                    disabled={!newClientForm.name.trim()}
+                    className="flex-1 py-2.5 bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-800 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Créer & Sélectionner
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
