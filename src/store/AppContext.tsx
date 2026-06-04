@@ -1,0 +1,2541 @@
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  ReactNode,
+  useEffect,
+  useCallback,
+  useRef,
+} from 'react';
+import { ToastMessage, ToastType } from '../components/Toast';
+import { db, supabase, subscribeTable, uploadFile, uploadBase64, BUCKETS } from '../lib/supabase';
+
+// ─── Null-or-zero sanitizer ────────────────────────────────────────────────────
+// Converts empty-string or undefined to null so optional UUID / date FK columns
+// never receive '' (which Postgres rejects with "invalid input syntax for uuid").
+const nz = (v: any) => (v === '' || v === undefined ? null : v);
+
+// ─── Types ─────────────────────────────────────────────────────────────────────
+
+export type FuelType = 'ESSENCE' | 'GASOIL' | 'GPL' | 'DIESEL' | 'SUPER';
+
+export interface Tank {
+  id: string;
+  name: string;
+  type: FuelType;
+  capacity: number;
+  current: number;
+  degrees: number;
+  alertThreshold: number;
+  notes?: string;
+}
+
+export interface Pump {
+  id: string;
+  number: string;
+  name: string;
+  tankId: string;
+  trackId: string;
+  type: FuelType;
+  lastIndex: number;
+  status: 'Actif' | 'Maintenance' | 'Hors service';
+  currentBrigadeStartIndex?: number;
+}
+
+export interface PumpNozzle {
+  id: string;
+  pumpId: string;
+  name: string;
+  lastIndex: number;
+  startIndex: number;
+  status: 'Actif' | 'Inactif';
+}
+
+export interface Track {
+  id: string;
+  name: string;
+}
+
+export interface Acompte {
+  id: string;
+  date: string;
+  amount: number;
+  description?: string;
+  isPaid: boolean;
+  monthPaid?: string;
+}
+
+export interface Absence {
+  id: string;
+  date: string;
+  cost: number;
+  description?: string;
+  isPaid: boolean;
+  monthPaid?: string;
+}
+
+export interface WorkerPaymentRecord {
+  id: string;
+  month: string;
+  baseSalary: number;
+  totalAcomptes: number;
+  totalAbsences: number;
+  bonusDecalage?: number;
+  retenueDecalage?: number;
+  netSalary: number;
+  paymentDate: string;
+  paymentMode: 'ESPECES' | 'CHEQUE' | 'VIREMENT';
+  chequeNumber?: string;
+  notes?: string;
+  isPaid: boolean;
+}
+
+export interface Pompiste {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  cin?: string;
+  address?: string;
+  photo?: string;      // URL (from bucket) or base64 (legacy)
+  photoUrl?: string;   // Supabase bucket URL
+  status: 'Actif' | 'Inactif';
+  trackId?: string;
+  chefId?: string;
+  baseSalary: number;
+  hasAccess: boolean;
+  username?: string;
+  password?: string;
+  authUserId?: string; // Supabase auth.users id (null = no account yet)
+  permissions?: UserPermissions;
+  paymentRecord?: WorkerPaymentRecord[];
+  acomptes?: Acompte[];
+  absences?: Absence[];
+  hireDate?: string;
+  decalageHistory?: {
+    brigadeId: string;
+    date: string;
+    amount: number;
+    type: 'BONUS' | 'RETENUE';
+  }[];
+}
+
+export interface BrigadeChef {
+  id: string;
+  name: string;
+  phone?: string;
+  cin?: string;
+  email?: string;
+  address?: string;
+  photo?: string;
+  photoUrl?: string;
+  status: 'Actif' | 'Inactif' | 'En service' | 'En congé' | 'Congé';
+  baseSalary: number;
+  hireDate?: string;
+  hasAccess: boolean;
+  username?: string;
+  password?: string;
+  authUserId?: string;
+  permissions?: UserPermissions;
+  pompisteIds: string[];
+  acomptes?: Acompte[];
+  absences?: Absence[];
+  paymentRecord?: WorkerPaymentRecord[];
+}
+
+export interface GerantWorker {
+  id: string;
+  name: string;
+  phone?: string;
+  cin?: string;
+  email?: string;
+  address?: string;
+  photo?: string;
+  photoUrl?: string;
+  status: 'Actif' | 'Inactif';
+  baseSalary: number;
+  hireDate?: string;
+  hasAccess: boolean;
+  username?: string;
+  password?: string;
+  authUserId?: string;
+  permissions?: UserPermissions;
+  paymentRecord?: WorkerPaymentRecord[];
+  acomptes?: Acompte[];
+  absences?: Absence[];
+}
+
+export interface MagasinWorker {
+  id: string;
+  name: string;
+  phone?: string;
+  cin?: string;
+  email?: string;
+  address?: string;
+  photo?: string;
+  photoUrl?: string;
+  status: 'Actif' | 'Inactif';
+  baseSalary: number;
+  hireDate?: string;
+  hasAccess: boolean;
+  username?: string;
+  password?: string;
+  authUserId?: string;
+  permissions?: UserPermissions;
+  paymentRecord?: WorkerPaymentRecord[];
+  acomptes?: Acompte[];
+  absences?: Absence[];
+}
+
+export interface Brigade {
+  id: string;
+  date: string;
+  shift: 'Matin' | 'Soir' | 'Nuit';
+  chefId: string;
+  status: 'Planifiée' | 'Ouverte' | 'Clôturée' | 'Fermée' | 'En attente';
+  startTimestamp?: string;
+  endTimestamp?: string;
+  startTime?: string;
+  endTime?: string;
+  isActive: boolean;
+  notes?: string;
+  printedAt?: string;
+  pompisteIds?: string[];
+  startIndices?: Record<string, number>;
+  endIndices?: Record<string, number>;
+  startTankLevels?: Record<string, { degrees: number; liters: number }>;
+  endTankLevels?: Record<string, { degrees: number; liters: number }>;
+  pompisteData?: Record<string, {
+    litersSold: number;
+    theoretical: number;
+    collected: { cash: number; bons: number; cheques: number };
+    totalCollected: number;
+    decalage: number;
+    pricePerLiter: number;
+  }>;
+  pompisteAssignments?: Array<{
+    pompisteId: string;
+    trackId: string;
+    present: boolean;
+    chefActingAsPompiste?: boolean;
+  }>;
+  startNozzleIndices?: Record<string, number>;
+  endNozzleIndices?: Record<string, number>;
+  activeNozzleIds?: string[];
+  canReactivate?: boolean;
+}
+
+export interface BrigadeAccountingJustification {
+  id: string;
+  accountingId: string;
+  clientId: string;
+  amount: number;
+  clientType?: string;
+  paymentMode?: string;
+  notes?: string;
+}
+
+export interface BrigadeAccounting {
+  id: string;
+  brigadeId: string;
+  totalDue: number;
+  cashReceived: number;
+  rest: number;
+  tankSummary: any[];
+  nozzleSummary: any[];
+  decalageSummary: Record<string, any>;
+  cuveVerifications: Record<string, { verified: boolean; corrected: boolean; correctedValue?: number }>;
+  nozzleVerifications: Record<string, { verified: boolean; corrected: boolean; correctedValue?: number }>;
+  restAssignedWorkerType?: string;
+  restAssignedWorkerId?: string;
+  restAssignedAmount: number;
+  status: 'draft' | 'completed';
+  createdBy?: string;
+  justifications?: BrigadeAccountingJustification[];
+}
+
+export interface Client {
+  id: string;
+  name: string;
+  phone?: string;
+  cin?: string;
+  email?: string;
+  address?: string;
+  contactPerson?: string;
+  balance: number;
+  debt: number;
+  creditLimit: number;
+  paymentDelay: number;
+  type: 'PARTICULIER' | 'ENTREPRISE' | 'GOUVERNEMENT';
+  paymentMode: 'CASH' | 'CREDIT' | 'ADVANCE';
+  nif?: string;
+  nis?: string;
+  article?: string;
+  rc?: string;
+  advanceBalance?: number;
+  appointments?: ClientAppointment[];
+  transactionHistory: {
+    id: string;
+    date: string;
+    type: 'RECHARGE' | 'PAYMENT' | 'SALE';
+    amount: number;
+    mode?: string;
+    receiptNumber?: string;
+    receiptPhoto?: string;
+    notes?: string;
+  }[];
+}
+
+export interface SupplierDebtPayment {
+  id: string;
+  purchaseId?: string;
+  deliveryNoteId?: string;
+  date: string;
+  amount: number;
+  totalDue: number;
+  rest: number;
+  paymentMode: 'ESPECES' | 'CHEQUE' | 'VIREMENT';
+  chequeNumber?: string;
+  notes?: string;
+}
+
+export interface SupplierAppointment {
+  id: string;
+  purchaseId?: string;
+  date: string;
+  amount: number;
+  notes?: string;
+  isPaid: boolean;
+}
+
+export interface ClientAppointment {
+  id: string;
+  saleId?: string;
+  date: string;
+  amount: number;
+  notes?: string;
+  isPaid: boolean;
+}
+
+export interface Supplier {
+  id: string;
+  ref?: string;
+  name: string;
+  contact?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  balance: number;
+  totalPurchases: number;
+  nif?: string;
+  nis?: string;
+  article?: string;
+  rc?: string;
+  type?: 'Carburant' | 'Magasin';
+  debtPayments?: SupplierDebtPayment[];
+  appointments?: SupplierAppointment[];
+}
+
+export interface ProductBrand {
+  id: string;
+  name: string;
+}
+
+export interface Product {
+  id: string;
+  ref?: string;
+  name: string;
+  category: string;
+  buyPrice: number;
+  sellingPrice: number;
+  stock: number;
+  minStock: number;
+  barcode?: string;
+  image?: string;    // URL (bucket) or base64 (legacy)
+  imageUrl?: string; // Supabase bucket URL
+  unit: string;
+  brand?: string;
+  brandId?: string;
+  lastSellingPrice?: number;
+  tvaRate?: number;
+  sellByDetails?: boolean;
+  detailCapacity?: number;
+  detailUnit?: string;
+}
+
+export interface Expense {
+  id: string;
+  date: string;
+  category: string;
+  amount: number;
+  description: string;
+  paymentMode?: string;
+  chequeNumber?: string;
+  paidBy?: string;
+  recipient?: string;
+  status?: string;
+  receipt?: string;   // URL or base64
+  receiptUrl?: string;
+  createdBy?: string;
+}
+
+export interface DeliveryNote {
+  id: string;
+  date: string;
+  supplierId: string;
+  tankId: string;
+  liters: number;
+  pricePerLiter: number;
+  status: 'Reçu' | 'En attente';
+  total: number;
+  expiryDate?: string;
+  photos?: string[];   // URLs
+  blNumber?: string;
+  blDate?: string;
+  creationDate?: string;
+  immatriculation?: string; // car plate, optional
+  driverId?: string;         // chauffeur (FK to drivers)
+  items?: DeliveryNoteItem[]; // multi-tank items
+  payments: {
+    id: string;
+    date: string;
+    amount: number;
+    mode: string;
+    receiptNumber?: string;
+    receiptPhoto?: string;
+  }[];
+}
+
+// Multi-tank items on a single Bon de Livraison
+export interface DeliveryNoteItem {
+  id: string;
+  deliveryNoteId: string;
+  tankId: string;
+  liters: number;
+  pricePerLiter: number;
+  total: number;
+}
+
+// Fuel Invoice (Facturation)
+export interface FuelInvoice {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  creationDate: string;
+  receptionDate?: string;
+  deliveryNoteIds: string[]; // linked BL ids
+  tvaActive: boolean;
+  tvaRate: number;
+  subtotal: number;
+  tvaAmount: number;
+  total: number;
+  amountPaid: number;
+  rest: number;
+  status: 'Payé' | 'Non Payé' | 'Partiel';
+  appointmentDate?: string;
+  appointmentAmount?: number;
+  appointmentNotes?: string;
+  invoiceImageUrl?: string;
+  notes?: string;
+}
+
+// Fuel Receipt (Paiements)
+export interface FuelReceipt {
+  id: string;
+  receiptNumber: string;
+  receiptDate: string;
+  creationDate: string;
+  invoiceIds: string[];        // linked invoice ids (empty = debt payment)
+  totalInvoiced: number;
+  amountPaid: number;
+  rest: number;
+  isDebtPayment: boolean;      // true when no invoices linked
+  receiptImageUrl?: string;
+  notes?: string;
+}
+
+export interface PurchaseItem {
+  productId?: string;
+  productName: string;
+  quantity: number;
+  buyPrice: number;
+  sellingPrice: number;
+  minStock?: number;
+  unit?: string;
+  total: number;
+  tankId?: string;
+  tvaActive?: boolean;
+  tvaRate?: number;
+}
+
+export interface PurchasePayment {
+  id: string;
+  date: string;
+  amount: number;
+  mode: 'ESPECES' | 'CHEQUE' | 'VIREMENT';
+  chequeNumber?: string;
+  notes?: string;
+}
+
+export interface Purchase {
+  id: string;
+  date: string;
+  supplierId: string;
+  invoiceNumber?: string;
+  dueDate?: string;
+  driverId?: string;
+  items: PurchaseItem[];
+  total: number;
+  amountPaid: number;
+  rest: number;
+  status: 'Payé' | 'Partiel' | 'À payer' | 'En attente livraison';
+  paymentMode?: 'ESPECES' | 'CHEQUE' | 'CREDIT' | 'VIREMENT';
+  chequeNumber?: string;
+  linkedDeliveryNoteId?: string;
+  payments: PurchasePayment[];
+  notes?: string;
+  type: 'COMMANDE' | 'RECEPTION';
+  receivedQuantities?: { [productId: string]: number };
+  tvaRate?: number;
+  tvaActive?: boolean;
+  tankId?: string;
+  receiptPhoto?: string;
+}
+
+export interface FuelSale {
+  id: string;
+  date: string;
+  pumpId: string;
+  liters: number;
+  pricePerLiter: number;
+  total: number;
+  paymentMode: 'ESPECES' | 'BON' | 'CHEQUE' | 'CREDIT' | 'AVANCE';
+  clientId?: string;
+  bonNumber?: string;
+  bonPhoto?: string;
+  bonPhotoUrl?: string;
+  pompisteId: string;
+  brigadeId: string;
+}
+
+export interface ShopSale {
+  id: string;
+  date: string;
+  clientId?: string;
+  sellerId?: string;
+  items: { productId: string; productName: string; quantity: number; price: number; tva?: number }[];
+  subtotal: number;
+  tvaAmount?: number;
+  total: number;
+  paymentMode: 'ESPECES' | 'CHEQUE' | 'CREDIT' | 'AVANCE' | 'BON';
+  chequeNumber?: string;
+  bonNumber?: string;
+  bonPhoto?: string;
+  bonPhotoUrl?: string;
+  amountPaid?: number;
+  rest?: number;
+  status: 'Payé' | 'Dette';
+  notes?: string;
+  printedAt?: string;
+  invoiceImageUrl?: string;
+}
+
+export interface InventoryPumpIndex {
+  pumpId: string;
+  systemIndex: number;
+  actualIndex: number;
+  gap: number;
+}
+
+export interface Inventory {
+  id: string;
+  name?: string;
+  description?: string;
+  date: string;
+  user: string;
+  type?: 'Carburant' | 'Magasin';
+  status: 'En cours' | 'Validé' | 'Comparé';
+  fuelGaps: {
+    tankId: string; systemQty: number; actualQty: number; degrees?: number; gap: number; value: number;
+  }[];
+  pumpIndexGaps?: InventoryPumpIndex[];
+  productGaps: {
+    productId: string; systemQty: number; actualQty: number; gap: number; value: number;
+  }[];
+  adjustmentReason?: string;
+  adjustedAt?: string;
+}
+
+export interface UserPermission {
+  voir: boolean; creer: boolean; modifier: boolean; supprimer: boolean;
+  imprimer: boolean; exporter: boolean; scanner: boolean; generer: boolean;
+}
+
+export interface UserPermissions {
+  [moduleId: string]: UserPermission;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  username?: string;
+  email: string;
+  role: string;
+  permissions: UserPermissions;
+  status: 'Actif' | 'Inactif';
+  avatarUrl?: string;
+}
+
+export interface StationSettings {
+  name: string;
+  logo?: string;
+  logoUrl?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  fiscalId?: string;
+  rc?: string;
+  fuelPrices: Record<FuelType, number>;
+  fuelBuyPrices: Record<FuelType, number>;
+  conversionTables: Record<string, { degree: number; liters: number }[]>;
+  productCategories: string[];
+  expenseCategories: string[];
+  productUnits?: string[];
+  decalagePositifActif?: boolean;
+  decalageNegatifActif?: boolean;
+}
+
+export interface DailyReport {
+  id: string;
+  date: string;
+  fuelRevenue: number;
+  shopRevenue: number;
+  totalExpenses: number;
+  cashToDeposit: number;
+  tankVariations: { tankId: string; startLiters: number; endLiters: number }[];
+  brigadeIds: string[];
+}
+
+export interface AppState {
+  tanks: Tank[];
+  pumps: Pump[];
+  pumpNozzles: PumpNozzle[];
+  tracks: Track[];
+  pompistes: Pompiste[];
+  brigadeChefs: BrigadeChef[];
+  brigades: Brigade[];
+  brigadeAccountings: BrigadeAccounting[];
+  clients: Client[];
+  suppliers: Supplier[];
+  products: Product[];
+  expenses: Expense[];
+  deliveryNotes: DeliveryNote[];
+  fuelInvoices: FuelInvoice[];
+  fuelReceipts: FuelReceipt[];
+  purchases: Purchase[];
+  fuelSales: FuelSale[];
+  shopSales: ShopSale[];
+  inventories: Inventory[];
+  dailyReports: DailyReport[];
+  settings: StationSettings;
+  users: User[];
+  toasts: ToastMessage[];
+  activityLog: { id: string; timestamp: string; userId: string; action: string; details: string }[];
+  isRtl: boolean;
+  gerants: GerantWorker[];
+  magasinWorkers: MagasinWorker[];
+  productBrands: ProductBrand[];
+  drivers: { id: string; name: string }[];
+  currentUserRole: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin';
+  currentUserId?: string;
+  currentUserName?: string;
+  currentUserAvatarUrl?: string;
+  isLoading: boolean;
+}
+
+// ─── Empty initial state (data comes from Supabase) ───────────────────────────
+export const DEFAULT_PRODUCT_UNITS = ['Pièce', 'Litre', 'Kg', 'Carton', 'Pack', 'Bidon'];
+
+const emptySettings: StationSettings = {
+  name: 'Station Naftal',
+  fuelPrices:    { SUPER: 14.80, DIESEL: 12.50, ESSENCE: 14.80, GASOIL: 12.50, GPL: 8.50 },
+  fuelBuyPrices: { SUPER: 0,     DIESEL: 0,     ESSENCE: 0,     GASOIL: 0,     GPL: 0     },
+  conversionTables: {},
+  productCategories: ['Lubrifiants', 'Accessoires', 'Lavage', 'Magasin'],
+  expenseCategories: ['Salaires', 'Entretien', 'Électricité', 'Eau', 'Loyer', 'Impôts', 'Divers'],
+  productUnits: DEFAULT_PRODUCT_UNITS,
+};
+
+const initialState: AppState = {
+  tanks: [], pumps: [], pumpNozzles: [], tracks: [], pompistes: [], brigadeChefs: [], brigades: [], brigadeAccountings: [],
+  clients: [], suppliers: [], products: [], expenses: [], deliveryNotes: [],
+  fuelInvoices: [], fuelReceipts: [],
+  purchases: [], fuelSales: [], shopSales: [], inventories: [], dailyReports: [],
+  settings: emptySettings,
+  users: [], toasts: [], activityLog: [],
+  isRtl: false,
+  gerants: [], magasinWorkers: [], productBrands: [], drivers: [],
+  currentUserRole: 'admin',
+  currentUserName: undefined,
+  currentUserAvatarUrl: undefined,
+  isLoading: true,
+};
+
+// ─── Action Types ─────────────────────────────────────────────────────────────
+
+type AppAction =
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'HYDRATE'; payload: Partial<AppState> }
+  | { type: 'ADD_TANK'; payload: Tank }
+  | { type: 'UPDATE_TANK'; payload: Tank }
+  | { type: 'DELETE_TANK'; payload: string }
+  | { type: 'ADD_PUMP'; payload: Pump }
+  | { type: 'UPDATE_PUMP'; payload: Pump }
+  | { type: 'DELETE_PUMP'; payload: string }
+  | { type: 'ADD_NOZZLE'; payload: PumpNozzle }
+  | { type: 'UPDATE_NOZZLE'; payload: PumpNozzle }
+  | { type: 'DELETE_NOZZLE'; payload: string }
+  | { type: 'ADD_TRACK'; payload: Track }
+  | { type: 'UPDATE_TRACK'; payload: Track }
+  | { type: 'DELETE_TRACK'; payload: string }
+  | { type: 'ADD_POMPISTE'; payload: Pompiste }
+  | { type: 'UPDATE_POMPISTE'; payload: Pompiste }
+  | { type: 'DELETE_POMPISTE'; payload: string }
+  | { type: 'ADD_BRIGADE_CHEF'; payload: BrigadeChef }
+  | { type: 'UPDATE_BRIGADE_CHEF'; payload: BrigadeChef }
+  | { type: 'DELETE_BRIGADE_CHEF'; payload: string }
+  | { type: 'ADD_CLIENT'; payload: Client }
+  | { type: 'UPDATE_CLIENT'; payload: Client }
+  | { type: 'DELETE_CLIENT'; payload: string }
+  | { type: 'ADD_SUPPLIER'; payload: Supplier }
+  | { type: 'UPDATE_SUPPLIER'; payload: Supplier }
+  | { type: 'DELETE_SUPPLIER'; payload: string }
+  | { type: 'ADD_PRODUCT'; payload: Product }
+  | { type: 'UPDATE_PRODUCT'; payload: Product }
+  | { type: 'DELETE_PRODUCT'; payload: string }
+  | { type: 'ADD_DELIVERY_NOTE'; payload: DeliveryNote }
+  | { type: 'UPDATE_DELIVERY_NOTE'; payload: DeliveryNote }
+  | { type: 'DELETE_DELIVERY_NOTE'; payload: string }
+  | { type: 'ADD_FUEL_INVOICE'; payload: FuelInvoice }
+  | { type: 'UPDATE_FUEL_INVOICE'; payload: FuelInvoice }
+  | { type: 'DELETE_FUEL_INVOICE'; payload: string }
+  | { type: 'ADD_FUEL_RECEIPT'; payload: FuelReceipt }
+  | { type: 'UPDATE_FUEL_RECEIPT'; payload: FuelReceipt }
+  | { type: 'DELETE_FUEL_RECEIPT'; payload: string }
+  | { type: 'ADD_PURCHASE'; payload: Purchase }
+  | { type: 'UPDATE_PURCHASE'; payload: Purchase }
+  | { type: 'DELETE_PURCHASE'; payload: string }
+  | { type: 'ADD_INVENTORY'; payload: Inventory }
+  | { type: 'UPDATE_INVENTORY'; payload: Inventory }
+  | { type: 'DELETE_INVENTORY'; payload: string }
+  | { type: 'ADD_EXPENSE'; payload: Expense }
+  | { type: 'UPDATE_EXPENSE'; payload: Expense }
+  | { type: 'DELETE_EXPENSE'; payload: string }
+  | { type: 'UPDATE_USER_PERMISSIONS'; payload: { userId: string; permissions: UserPermissions } }
+  | { type: 'ADD_USER'; payload: User }
+  | { type: 'UPDATE_USER'; payload: User }
+  | { type: 'LOG_ACTIVITY'; payload: { userId: string; action: string; details: string } }
+  | { type: 'SET_SETTINGS'; payload: StationSettings }
+  | { type: 'ADD_BRIGADE'; payload: Brigade }
+  | { type: 'ADD_DRIVER'; payload: { id: string; name: string } }
+  | { type: 'DELETE_DRIVER'; payload: string }
+  | { type: 'UPDATE_BRIGADE'; payload: Brigade }
+  | { type: 'DELETE_BRIGADE'; payload: string }
+  | { type: 'ADD_FUEL_SALE'; payload: FuelSale }
+  | { type: 'UPDATE_FUEL_SALE'; payload: FuelSale }
+  | { type: 'DELETE_FUEL_SALE'; payload: string }
+  | { type: 'ADD_SHOP_SALE'; payload: ShopSale }
+  | { type: 'UPDATE_SHOP_SALE'; payload: ShopSale }
+  | { type: 'DELETE_SHOP_SALE'; payload: string }
+  | { type: 'ADD_DAILY_REPORT'; payload: DailyReport }
+  | { type: 'ADD_TOAST'; payload: { type: ToastType; message: string } }
+  | { type: 'REMOVE_TOAST'; payload: string }
+  | { type: 'TOGGLE_RTL' }
+  | { type: 'ADD_GERANT'; payload: GerantWorker }
+  | { type: 'UPDATE_GERANT'; payload: GerantWorker }
+  | { type: 'DELETE_GERANT'; payload: string }
+  | { type: 'ADD_MAGASIN_WORKER'; payload: MagasinWorker }
+  | { type: 'UPDATE_MAGASIN_WORKER'; payload: MagasinWorker }
+  | { type: 'DELETE_MAGASIN_WORKER'; payload: string }
+  | { type: 'ADD_BRAND'; payload: ProductBrand }
+  | { type: 'UPDATE_BRAND'; payload: ProductBrand }
+  | { type: 'DELETE_BRAND'; payload: string }
+  | { type: 'UPDATE_WORKER_ACOMPTE'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; acompte: Acompte } }
+  | { type: 'UPDATE_WORKER_ABSENCE'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; absence: Absence } }
+  | { type: 'ADD_WORKER_PAYMENT'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; payment: WorkerPaymentRecord } }
+  | { type: 'ADD_SUPPLIER_APPOINTMENT'; payload: { supplierId: string; appointment: SupplierAppointment } }
+  | { type: 'ADD_CLIENT_APPOINTMENT'; payload: { clientId: string; appointment: ClientAppointment } }
+  | { type: 'ADD_SUPPLIER_PAYMENT'; payload: { supplierId: string; payment: SupplierDebtPayment } }
+  | { type: 'ADD_CLIENT_PAYMENT'; payload: { clientId: string; payment: { id: string; date: string; type: 'PAYMENT' | 'RECHARGE' | 'SALE'; amount: number; mode?: string; receiptNumber?: string; receiptPhoto?: string; notes?: string } } }
+  | { type: 'UPDATE_PRODUCT_STOCK'; payload: { productId: string; quantity: number; buyPrice?: number; sellPrice?: number } }
+  | { type: 'SAVE_INVENTORY'; payload: Inventory }
+  | { type: 'UPDATE_BRIGADE_STATUS'; payload: { brigadeId: string; isActive: boolean; status: string } }
+  | { type: 'MARK_PAYMENT_PAID'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; paymentId: string } }
+  | { type: 'UPDATE_WORKER_PERMISSIONS'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; permissions: UserPermissions } }
+  | { type: 'SET_CURRENT_USER'; payload: { role: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; id?: string; name?: string; avatarUrl?: string } }
+  | { type: 'ADD_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
+  | { type: 'UPDATE_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
+  | { type: 'RESTORE_STATE'; payload: AppState };
+
+// ─── Reducer ──────────────────────────────────────────────────────────────────
+
+function appReducer(state: AppState, action: AppAction): AppState {
+  switch (action.type) {
+    case 'SET_LOADING':
+      return { ...state, isLoading: action.payload };
+    case 'HYDRATE':
+      return { ...state, ...action.payload, isLoading: false };
+
+    case 'SET_CURRENT_USER':
+      return { ...state, currentUserRole: action.payload.role, currentUserId: action.payload.id, currentUserName: action.payload.name, currentUserAvatarUrl: action.payload.avatarUrl };
+
+    case 'ADD_TANK':    return { ...state, tanks: [...state.tanks, action.payload] };
+    case 'UPDATE_TANK': return { ...state, tanks: state.tanks.map(t => t.id === action.payload.id ? action.payload : t) };
+    case 'DELETE_TANK': return { ...state, tanks: state.tanks.filter(t => t.id !== action.payload) };
+
+    case 'ADD_PUMP':    return { ...state, pumps: [...state.pumps, action.payload] };
+    case 'UPDATE_PUMP': return { ...state, pumps: state.pumps.map(p => p.id === action.payload.id ? action.payload : p) };
+    case 'DELETE_PUMP': return { ...state, pumps: state.pumps.filter(p => p.id !== action.payload) };
+
+    case 'ADD_NOZZLE':    return { ...state, pumpNozzles: [...(state.pumpNozzles || []), action.payload] };
+    case 'UPDATE_NOZZLE': return { ...state, pumpNozzles: (state.pumpNozzles || []).map(n => n.id === action.payload.id ? action.payload : n) };
+    case 'DELETE_NOZZLE': return { ...state, pumpNozzles: (state.pumpNozzles || []).filter(n => n.id !== action.payload) };
+
+    case 'ADD_TRACK':    return { ...state, tracks: [...state.tracks, action.payload] };
+    case 'UPDATE_TRACK': return { ...state, tracks: state.tracks.map(t => t.id === action.payload.id ? action.payload : t) };
+    case 'DELETE_TRACK': return { ...state, tracks: state.tracks.filter(t => t.id !== action.payload) };
+
+    case 'ADD_POMPISTE':    return { ...state, pompistes: [...state.pompistes, action.payload] };
+    case 'UPDATE_POMPISTE': return { ...state, pompistes: state.pompistes.map(p => p.id === action.payload.id ? action.payload : p) };
+    case 'DELETE_POMPISTE': return { ...state, pompistes: state.pompistes.filter(p => p.id !== action.payload) };
+
+    case 'ADD_BRIGADE_CHEF':    return { ...state, brigadeChefs: [...state.brigadeChefs, action.payload] };
+    case 'UPDATE_BRIGADE_CHEF': return { ...state, brigadeChefs: state.brigadeChefs.map(b => b.id === action.payload.id ? action.payload : b) };
+    case 'DELETE_BRIGADE_CHEF': return { ...state, brigadeChefs: state.brigadeChefs.filter(b => b.id !== action.payload) };
+
+    case 'ADD_CLIENT':    return { ...state, clients: [...state.clients, action.payload] };
+    case 'UPDATE_CLIENT': return { ...state, clients: state.clients.map(c => c.id === action.payload.id ? action.payload : c) };
+    case 'DELETE_CLIENT': return { ...state, clients: state.clients.filter(c => c.id !== action.payload) };
+
+    case 'ADD_SUPPLIER':    return { ...state, suppliers: [...state.suppliers, action.payload] };
+    case 'UPDATE_SUPPLIER': return { ...state, suppliers: state.suppliers.map(s => s.id === action.payload.id ? action.payload : s) };
+    case 'DELETE_SUPPLIER': return { ...state, suppliers: state.suppliers.filter(s => s.id !== action.payload) };
+
+    case 'ADD_PRODUCT':    return { ...state, products: [...state.products, action.payload] };
+    case 'UPDATE_PRODUCT': return { ...state, products: state.products.map(p => p.id === action.payload.id ? action.payload : p) };
+    case 'DELETE_PRODUCT': return { ...state, products: state.products.filter(p => p.id !== action.payload) };
+
+    case 'ADD_DELIVERY_NOTE':    return { ...state, deliveryNotes: [...state.deliveryNotes, action.payload] };
+    case 'UPDATE_DELIVERY_NOTE': return { ...state, deliveryNotes: state.deliveryNotes.map(d => d.id === action.payload.id ? action.payload : d) };
+    case 'DELETE_DELIVERY_NOTE': return { ...state, deliveryNotes: state.deliveryNotes.filter(d => d.id !== action.payload) };
+
+    case 'ADD_FUEL_INVOICE':    return { ...state, fuelInvoices: [...state.fuelInvoices, action.payload] };
+    case 'UPDATE_FUEL_INVOICE': return { ...state, fuelInvoices: state.fuelInvoices.map(f => f.id === action.payload.id ? action.payload : f) };
+    case 'DELETE_FUEL_INVOICE': return { ...state, fuelInvoices: state.fuelInvoices.filter(f => f.id !== action.payload) };
+    case 'ADD_FUEL_RECEIPT':    return { ...state, fuelReceipts: [...state.fuelReceipts, action.payload] };
+    case 'UPDATE_FUEL_RECEIPT': return { ...state, fuelReceipts: state.fuelReceipts.map(r => r.id === action.payload.id ? action.payload : r) };
+    case 'DELETE_FUEL_RECEIPT': return { ...state, fuelReceipts: state.fuelReceipts.filter(r => r.id !== action.payload) };
+
+    case 'ADD_PURCHASE':    return { ...state, purchases: [...state.purchases, action.payload] };
+    case 'UPDATE_PURCHASE': return { ...state, purchases: state.purchases.map(p => p.id === action.payload.id ? action.payload : p) };
+    case 'DELETE_PURCHASE': return { ...state, purchases: state.purchases.filter(p => p.id !== action.payload) };
+
+    case 'ADD_INVENTORY':    return { ...state, inventories: [...state.inventories, action.payload] };
+    case 'UPDATE_INVENTORY': return { ...state, inventories: state.inventories.map(i => i.id === action.payload.id ? action.payload : i) };
+    case 'DELETE_INVENTORY': return { ...state, inventories: state.inventories.filter(i => i.id !== action.payload) };
+
+    case 'ADD_EXPENSE':    return { ...state, expenses: [...state.expenses, action.payload] };
+    case 'UPDATE_EXPENSE': return { ...state, expenses: state.expenses.map(e => e.id === action.payload.id ? action.payload : e) };
+    case 'DELETE_EXPENSE': return { ...state, expenses: state.expenses.filter(e => e.id !== action.payload) };
+
+    case 'ADD_USER':    return { ...state, users: [...state.users, action.payload] };
+    case 'UPDATE_USER': return { ...state, users: state.users.map(u => u.id === action.payload.id ? action.payload : u) };
+    case 'UPDATE_USER_PERMISSIONS':
+      return { ...state, users: state.users.map(u => u.id === action.payload.userId ? { ...u, permissions: action.payload.permissions } : u) };
+
+    case 'LOG_ACTIVITY': {
+      const newLog = { id: `LOG-${Date.now()}`, timestamp: new Date().toISOString(), ...action.payload };
+      return { ...state, activityLog: [newLog, ...state.activityLog].slice(0, 500) };
+    }
+
+    case 'SET_SETTINGS': return { ...state, settings: action.payload };
+
+    case 'RESTORE_STATE': return action.payload;
+
+    case 'ADD_BRIGADE':    return { ...state, brigades: [...state.brigades, action.payload] };
+    case 'UPDATE_BRIGADE': return { ...state, brigades: state.brigades.map(b => b.id === action.payload.id ? action.payload : b) };
+    case 'DELETE_BRIGADE': return { ...state, brigades: state.brigades.filter(b => b.id !== action.payload) };
+
+    case 'ADD_FUEL_SALE':    return { ...state, fuelSales: [...state.fuelSales, action.payload] };
+    case 'UPDATE_FUEL_SALE': return { ...state, fuelSales: state.fuelSales.map(s => s.id === action.payload.id ? action.payload : s) };
+    case 'DELETE_FUEL_SALE': return { ...state, fuelSales: state.fuelSales.filter(s => s.id !== action.payload) };
+
+    case 'ADD_SHOP_SALE':    return { ...state, shopSales: [...state.shopSales, action.payload] };
+    case 'UPDATE_SHOP_SALE': return { ...state, shopSales: state.shopSales.map(s => s.id === action.payload.id ? action.payload : s) };
+    case 'DELETE_SHOP_SALE': return { ...state, shopSales: state.shopSales.filter(s => s.id !== action.payload) };
+
+    case 'ADD_DAILY_REPORT': return { ...state, dailyReports: [...state.dailyReports, action.payload] };
+
+    case 'ADD_TOAST': {
+      const id = `toast-${Date.now()}`;
+      return { ...state, toasts: [...state.toasts, { id, type: action.payload.type, message: action.payload.message }] };
+    }
+    case 'REMOVE_TOAST':
+      return { ...state, toasts: state.toasts.filter(t => t.id !== action.payload) };
+
+    case 'TOGGLE_RTL': return { ...state, isRtl: !state.isRtl };
+
+    case 'ADD_GERANT':    return { ...state, gerants: [...state.gerants, action.payload] };
+    case 'UPDATE_GERANT': return { ...state, gerants: state.gerants.map(g => g.id === action.payload.id ? action.payload : g) };
+    case 'DELETE_GERANT': return { ...state, gerants: state.gerants.filter(g => g.id !== action.payload) };
+
+    case 'ADD_MAGASIN_WORKER':    return { ...state, magasinWorkers: [...state.magasinWorkers, action.payload] };
+    case 'UPDATE_MAGASIN_WORKER': return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === action.payload.id ? action.payload : m) };
+    case 'DELETE_MAGASIN_WORKER': return { ...state, magasinWorkers: state.magasinWorkers.filter(m => m.id !== action.payload) };
+
+    case 'ADD_BRAND':    return { ...state, productBrands: [...state.productBrands, action.payload] };
+    case 'UPDATE_BRAND': return { ...state, productBrands: state.productBrands.map(b => b.id === action.payload.id ? action.payload : b) };
+    case 'DELETE_BRAND': return { ...state, productBrands: state.productBrands.filter(b => b.id !== action.payload) };
+
+    case 'ADD_DRIVER': return { ...state, drivers: [...(state.drivers || []), action.payload] };
+    case 'DELETE_DRIVER': return { ...state, drivers: (state.drivers || []).filter(d => d.id !== action.payload) };
+
+    case 'UPDATE_WORKER_ACOMPTE': {
+      const { workerType, workerId, acompte } = action.payload;
+      if (workerType === 'pompiste')
+        return { ...state, pompistes: state.pompistes.map(p => p.id === workerId ? { ...p, acomptes: [...(p.acomptes || []), acompte] } : p) };
+      if (workerType === 'chef_brigade')
+        return { ...state, brigadeChefs: state.brigadeChefs.map(c => c.id === workerId ? { ...c, acomptes: [...(c.acomptes || []), acompte] } : c) };
+      if (workerType === 'gerant')
+        return { ...state, gerants: state.gerants.map(g => g.id === workerId ? { ...g, acomptes: [...(g.acomptes || []), acompte] } : g) };
+      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, acomptes: [...(m.acomptes || []), acompte] } : m) };
+    }
+
+    case 'UPDATE_WORKER_ABSENCE': {
+      const { workerType, workerId, absence } = action.payload;
+      if (workerType === 'pompiste')
+        return { ...state, pompistes: state.pompistes.map(p => p.id === workerId ? { ...p, absences: [...(p.absences || []), absence] } : p) };
+      if (workerType === 'chef_brigade')
+        return { ...state, brigadeChefs: state.brigadeChefs.map(c => c.id === workerId ? { ...c, absences: [...(c.absences || []), absence] } : c) };
+      if (workerType === 'gerant')
+        return { ...state, gerants: state.gerants.map(g => g.id === workerId ? { ...g, absences: [...(g.absences || []), absence] } : g) };
+      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, absences: [...(m.absences || []), absence] } : m) };
+    }
+
+    case 'ADD_WORKER_PAYMENT': {
+      const { workerType, workerId, payment } = action.payload;
+      if (workerType === 'pompiste')
+        return { ...state, pompistes: state.pompistes.map(p => p.id === workerId ? { ...p, paymentRecord: [...(p.paymentRecord || []), payment] } : p) };
+      if (workerType === 'chef_brigade')
+        return { ...state, brigadeChefs: state.brigadeChefs.map(c => c.id === workerId ? { ...c, paymentRecord: [...(c.paymentRecord || []), payment] } : c) };
+      if (workerType === 'gerant')
+        return { ...state, gerants: state.gerants.map(g => g.id === workerId ? { ...g, paymentRecord: [...(g.paymentRecord || []), payment] } : g) };
+      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, paymentRecord: [...(m.paymentRecord || []), payment] } : m) };
+    }
+
+    case 'ADD_SUPPLIER_APPOINTMENT':
+      return { ...state, suppliers: state.suppliers.map(s => s.id === action.payload.supplierId ? { ...s, appointments: [...(s.appointments || []), action.payload.appointment] } : s) };
+
+    case 'ADD_CLIENT_APPOINTMENT':
+      return { ...state, clients: state.clients.map(c => c.id === action.payload.clientId ? { ...c, appointments: [...(c.appointments || []), action.payload.appointment] } : c) };
+
+    case 'ADD_SUPPLIER_PAYMENT':
+      return { ...state, suppliers: state.suppliers.map(s => s.id === action.payload.supplierId ? { ...s, balance: Math.max(0, s.balance - action.payload.payment.amount), debtPayments: [...(s.debtPayments || []), action.payload.payment] } : s) };
+
+    case 'ADD_CLIENT_PAYMENT':
+      return { ...state, clients: state.clients.map(c => {
+        if (c.id !== action.payload.clientId) return c;
+        let updatedBalance = c.balance;
+        let updatedDebt = c.debt;
+        if (action.payload.payment.type === 'PAYMENT') updatedDebt = Math.max(0, c.debt - action.payload.payment.amount);
+        else if (action.payload.payment.type === 'RECHARGE') updatedBalance = c.balance + action.payload.payment.amount;
+        return { ...c, balance: updatedBalance, debt: updatedDebt, transactionHistory: [...(c.transactionHistory || []), action.payload.payment as any] };
+      }) };
+
+    case 'UPDATE_PRODUCT_STOCK':
+      return { ...state, products: state.products.map(p => p.id === action.payload.productId ? { ...p, stock: p.stock + action.payload.quantity, buyPrice: action.payload.buyPrice ?? p.buyPrice, sellingPrice: action.payload.sellPrice ?? p.sellingPrice } : p) };
+
+    case 'SAVE_INVENTORY':
+      return { ...state, inventories: [...state.inventories, action.payload] };
+
+    case 'UPDATE_BRIGADE_STATUS':
+      return { ...state, brigades: state.brigades.map(b => b.id === action.payload.brigadeId ? { ...b, isActive: action.payload.isActive, status: action.payload.status as any } : b) };
+
+    case 'ADD_BRIGADE_ACCOUNTING':    return { ...state, brigadeAccountings: [...state.brigadeAccountings, action.payload] };
+    case 'UPDATE_BRIGADE_ACCOUNTING': return { ...state, brigadeAccountings: state.brigadeAccountings.map(a => a.id === action.payload.id ? action.payload : a) };
+
+    case 'MARK_PAYMENT_PAID': {
+      const { workerType, workerId, paymentId } = action.payload;
+      const upd = (rec: any[]) => rec.map(p => p.id === paymentId ? { ...p, isPaid: true } : p);
+      if (workerType === 'pompiste')       return { ...state, pompistes:      state.pompistes.map(p => p.id === workerId ? { ...p, paymentRecord: upd(p.paymentRecord || []) } : p) };
+      if (workerType === 'chef_brigade')   return { ...state, brigadeChefs:   state.brigadeChefs.map(c => c.id === workerId ? { ...c, paymentRecord: upd(c.paymentRecord || []) } : c) };
+      if (workerType === 'gerant')         return { ...state, gerants:        state.gerants.map(g => g.id === workerId ? { ...g, paymentRecord: upd(g.paymentRecord || []) } : g) };
+      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, paymentRecord: upd(m.paymentRecord || []) } : m) };
+    }
+
+    case 'UPDATE_WORKER_PERMISSIONS': {
+      const { workerType, workerId, permissions } = action.payload;
+      if (workerType === 'pompiste')       return { ...state, pompistes:      state.pompistes.map(p => p.id === workerId ? { ...p, permissions } : p) };
+      if (workerType === 'chef_brigade')   return { ...state, brigadeChefs:   state.brigadeChefs.map(c => c.id === workerId ? { ...c, permissions } : c) };
+      if (workerType === 'gerant')         return { ...state, gerants:        state.gerants.map(g => g.id === workerId ? { ...g, permissions } : g) };
+      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, permissions } : m) };
+    }
+
+    default: return state;
+  }
+}
+
+// ─── Supabase row → AppContext model mappers ──────────────────────────────────
+
+function mapTank(r: any): Tank {
+  return { id: r.id, name: r.name, type: r.type, capacity: +r.capacity, current: +r.current, degrees: +r.degrees, alertThreshold: +r.alert_threshold, notes: r.notes };
+}
+function mapPump(r: any): Pump {
+  return { id: r.id, number: r.number, name: r.name, tankId: r.tank_id, trackId: r.track_id, type: r.type, lastIndex: +r.last_index, status: r.status, currentBrigadeStartIndex: r.current_brigade_start_index ? +r.current_brigade_start_index : undefined };
+}
+function mapTrack(r: any): Track { return { id: r.id, name: r.name }; }
+function mapDriver(r: any) { return { id: r.id, name: r.name }; }
+function mapSupplier(r: any): Supplier {
+  return { id: r.id, ref: r.ref, name: r.name, contact: r.contact, phone: r.phone, email: r.email, address: r.address, balance: +r.balance, totalPurchases: +r.total_purchases, nif: r.nif, nis: r.nis, article: r.article, rc: r.rc, type: r.type, appointments: [], debtPayments: [] };
+}
+function mapClient(r: any): Client {
+  return { id: r.id, name: r.name, phone: r.phone, cin: r.cin, email: r.email, address: r.address, contactPerson: r.contact_person, balance: +r.balance, debt: +r.debt, creditLimit: +r.credit_limit, paymentDelay: +r.payment_delay, type: r.type, paymentMode: r.payment_mode, nif: r.nif, nis: r.nis, article: r.article, rc: r.rc, advanceBalance: +(r.advance_balance ?? 0), appointments: [], transactionHistory: [] };
+}
+function mapProduct(r: any): Product {
+  return { id: r.id, ref: r.ref, name: r.name, category: r.category, buyPrice: +r.buy_price, sellingPrice: +r.selling_price, stock: +r.stock, minStock: +r.min_stock, barcode: r.barcode, image: r.image_url, imageUrl: r.image_url, unit: r.unit, brand: r.brand, brandId: r.brand_id, lastSellingPrice: r.last_selling_price ? +r.last_selling_price : undefined, tvaRate: +(r.tva_rate ?? 0), sellByDetails: r.sell_by_details ?? false, detailCapacity: r.detail_capacity ? +r.detail_capacity : undefined, detailUnit: r.detail_unit };
+}
+function mapBrand(r: any): ProductBrand { return { id: r.id, name: r.name }; }
+function mapPompiste(r: any): Pompiste {
+  return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, trackId: r.track_id, chefId: r.chef_id, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, paymentRecord: [], acomptes: [], absences: [], decalageHistory: [] };
+}
+function mapBrigadeChef(r: any): BrigadeChef {
+  return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, pompisteIds: [], paymentRecord: [], acomptes: [], absences: [] };
+}
+function mapGerant(r: any): GerantWorker {
+  return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, paymentRecord: [], acomptes: [], absences: [] };
+}
+function mapMagasinWorker(r: any): MagasinWorker {
+  return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, paymentRecord: [], acomptes: [], absences: [] };
+}
+function mapBrigade(r: any): Brigade {
+  return { id: r.id, date: r.date, shift: r.shift, chefId: r.chef_id, status: r.status, startTimestamp: r.start_timestamp, endTimestamp: r.end_timestamp, startTime: r.start_time, endTime: r.end_time, isActive: r.is_active, notes: r.notes, printedAt: r.printed_at, pompisteIds: [], startIndices: r.start_indices || {}, endIndices: r.end_indices || {}, startTankLevels: r.start_tank_levels || {}, endTankLevels: r.end_tank_levels || {}, pompisteData: r.pompiste_data || {}, pompisteAssignments: r.pompiste_assignments || [], startNozzleIndices: r.start_nozzle_indices || {}, endNozzleIndices: r.end_nozzle_indices || {}, activeNozzleIds: r.active_nozzle_ids || [], canReactivate: r.can_reactivate ?? false };
+}
+function mapBrigadeAccounting(r: any): BrigadeAccounting {
+  return {
+    id: r.id, brigadeId: r.brigade_id, totalDue: +r.total_due || 0, cashReceived: +r.cash_received || 0,
+    rest: +r.rest || 0, tankSummary: r.tank_summary || [], nozzleSummary: r.nozzle_summary || [],
+    decalageSummary: r.decalage_summary || {}, cuveVerifications: r.cuve_verifications || {},
+    nozzleVerifications: r.nozzle_verifications || {}, restAssignedWorkerType: r.rest_assigned_worker_type,
+    restAssignedWorkerId: r.rest_assigned_worker_id, restAssignedAmount: +r.rest_assigned_amount || 0,
+    status: r.status || 'draft', createdBy: r.created_by, justifications: [],
+  };
+}
+function mapFuelSale(r: any): FuelSale {
+  return { id: r.id, date: r.date, pumpId: r.pump_id, liters: +r.liters, pricePerLiter: +r.price_per_liter, total: +r.total, paymentMode: r.payment_mode, clientId: r.client_id, bonNumber: r.bon_number, bonPhoto: r.bon_photo_url, bonPhotoUrl: r.bon_photo_url, pompisteId: r.pompiste_id, brigadeId: r.brigade_id };
+}
+function mapShopSale(r: any): ShopSale {
+  return { id: r.id, date: r.date, clientId: r.client_id, sellerId: r.seller_id, items: [], subtotal: +r.subtotal, tvaAmount: +r.tva_amount, total: +r.total, paymentMode: r.payment_mode, chequeNumber: r.cheque_number, bonNumber: r.bon_number, bonPhoto: r.bon_photo_url, bonPhotoUrl: r.bon_photo_url, amountPaid: +r.amount_paid, rest: +r.rest, status: r.status, notes: r.notes, printedAt: r.printed_at, invoiceImageUrl: r.invoice_image_url };
+}
+function mapDeliveryNote(r: any): DeliveryNote {
+  return { id: r.id, date: r.date, supplierId: r.supplier_id, tankId: r.tank_id, liters: +r.liters, pricePerLiter: +r.price_per_liter, status: r.status, total: +r.total, expiryDate: r.expiry_date, blNumber: r.bl_number, blDate: r.bl_date, creationDate: r.creation_date, immatriculation: r.immatriculation, driverId: r.driver_id, items: [], photos: [], payments: [] };
+}
+function mapFuelInvoice(r: any): FuelInvoice {
+  return {
+    id: r.id, invoiceNumber: r.invoice_number, invoiceDate: r.invoice_date,
+    creationDate: r.creation_date, receptionDate: r.reception_date,
+    deliveryNoteIds: [], // loaded separately from fuel_invoice_bls
+    tvaActive: r.tva_active, tvaRate: +r.tva_rate, subtotal: +r.subtotal,
+    tvaAmount: +r.tva_amount, total: +r.total, amountPaid: +r.amount_paid,
+    rest: +r.rest, status: r.status, appointmentDate: r.appointment_date,
+    appointmentAmount: r.appointment_amount ? +r.appointment_amount : undefined,
+    appointmentNotes: r.appointment_notes, invoiceImageUrl: r.invoice_image_url, notes: r.notes
+  };
+}
+function mapFuelReceipt(r: any): FuelReceipt {
+  return {
+    id: r.id, receiptNumber: r.receipt_number, receiptDate: r.receipt_date,
+    creationDate: r.creation_date, invoiceIds: [],
+    totalInvoiced: +r.total_invoiced, amountPaid: +r.amount_paid,
+    rest: +r.rest, isDebtPayment: r.is_debt_payment,
+    receiptImageUrl: r.receipt_image_url, notes: r.notes
+  };
+}
+function mapDeliveryNoteItem(r: any): DeliveryNoteItem {
+  return { id: r.id, deliveryNoteId: r.delivery_note_id, tankId: r.tank_id, liters: +r.liters, pricePerLiter: +r.price_per_liter, total: +r.total };
+}
+function mapPurchase(r: any): Purchase {
+  return { id: r.id, date: r.date, supplierId: r.supplier_id, invoiceNumber: r.invoice_number, dueDate: r.due_date, driverId: r.driver_id, items: [], total: +r.total, amountPaid: +r.amount_paid, rest: +r.rest, status: r.status, paymentMode: r.payment_mode, chequeNumber: r.cheque_number, linkedDeliveryNoteId: r.linked_delivery_note_id, payments: [], notes: r.notes, type: r.type, tvaRate: +(r.tva_rate ?? 0), tvaActive: r.tva_active, tankId: r.tank_id, receiptPhoto: r.receipt_photo_url };
+}
+function mapExpense(r: any): Expense {
+  return { id: r.id, date: r.date, category: r.category, amount: +r.amount, description: r.description, paymentMode: r.payment_mode, chequeNumber: r.cheque_number, paidBy: r.paid_by, recipient: r.recipient, status: r.status, receipt: r.receipt_url, receiptUrl: r.receipt_url, createdBy: r.created_by };
+}
+function mapInventory(r: any): Inventory {
+  return { id: r.id, name: r.name, description: r.description, date: r.date, user: r.user_name, type: r.type, status: r.status, fuelGaps: r.fuel_gaps || [], pumpIndexGaps: r.pump_index_gaps || [], productGaps: r.product_gaps || [], adjustmentReason: r.adjustment_reason, adjustedAt: r.adjusted_at };
+}
+function mapDailyReport(r: any): DailyReport {
+  return { id: r.id, date: r.date, fuelRevenue: +r.fuel_revenue, shopRevenue: +r.shop_revenue, totalExpenses: +r.total_expenses, cashToDeposit: +r.cash_to_deposit, tankVariations: r.tank_variations || [], brigadeIds: r.brigade_ids || [] };
+}
+function mapNozzle(r: any): PumpNozzle {
+  return { id: r.id, pumpId: r.pump_id, name: r.name, lastIndex: +r.last_index, startIndex: +r.start_index, status: r.status || 'Actif' };
+}
+function mapSettings(r: any): StationSettings {
+  return { name: r.name, logo: r.logo_url, logoUrl: r.logo_url, address: r.address, phone: r.phone, email: r.email, fiscalId: r.fiscal_id, rc: r.rc, fuelPrices: r.fuel_prices || emptySettings.fuelPrices, fuelBuyPrices: r.fuel_buy_prices || emptySettings.fuelBuyPrices, conversionTables: r.conversion_tables || {}, productCategories: r.product_categories || emptySettings.productCategories, expenseCategories: r.expense_categories || emptySettings.expenseCategories, productUnits: r.product_units || DEFAULT_PRODUCT_UNITS, decalagePositifActif: r.decalage_positif_actif, decalageNegatifActif: r.decalage_negatif_actif };
+}
+function mapAcompte(r: any): Acompte {
+  return { id: r.id, date: r.date, amount: +r.amount, description: r.description, isPaid: r.is_paid, monthPaid: r.month_paid };
+}
+function mapAbsence(r: any): Absence {
+  return { id: r.id, date: r.date, cost: +r.cost, description: r.description, isPaid: r.is_paid, monthPaid: r.month_paid };
+}
+function mapPaymentRecord(r: any): WorkerPaymentRecord {
+  return { id: r.id, month: r.month, baseSalary: +r.base_salary, totalAcomptes: +r.total_acomptes, totalAbsences: +r.total_absences, bonusDecalage: +(r.bonus_decalage ?? 0), retenueDecalage: +(r.retenue_decalage ?? 0), netSalary: +r.net_salary, paymentDate: r.payment_date, paymentMode: r.payment_mode, chequeNumber: r.cheque_number, notes: r.notes, isPaid: r.is_paid };
+}
+
+// ─── Supabase sync function (standalone, not a hook) ─────────────────────────
+// This is extracted here so AppProvider can wrap dispatch with it.
+// NOTE: errors are intentionally NOT caught here — they propagate to
+// syncedDispatch which shows a toast and reverts the optimistic change.
+async function syncToSupabase(action: AppAction): Promise<void> {
+  switch (action.type) {
+      case 'ADD_TANK':
+        await db.addTank({ id: action.payload.id, name: action.payload.name, type: action.payload.type, capacity: action.payload.capacity, current: action.payload.current, degrees: action.payload.degrees, alert_threshold: action.payload.alertThreshold, notes: action.payload.notes });
+        break;
+      case 'UPDATE_TANK':
+        await db.updateTank(action.payload.id, { name: action.payload.name, type: action.payload.type, capacity: action.payload.capacity, current: action.payload.current, degrees: action.payload.degrees, alert_threshold: action.payload.alertThreshold, notes: action.payload.notes });
+        break;
+      case 'DELETE_TANK': await db.deleteTank(action.payload); break;
+      case 'ADD_TRACK':    await db.addTrack({ id: action.payload.id, name: action.payload.name }); break;
+      case 'UPDATE_TRACK': await db.updateTrack(action.payload.id, { name: action.payload.name, updated_at: new Date().toISOString() }); break;
+      case 'DELETE_TRACK': await db.deleteTrack(action.payload); break;
+      case 'ADD_PUMP':
+        await db.addPump({ id: action.payload.id, number: action.payload.number, name: action.payload.name, tank_id: nz(action.payload.tankId), track_id: nz(action.payload.trackId), type: action.payload.type, last_index: action.payload.lastIndex, status: action.payload.status });
+        break;
+      case 'UPDATE_PUMP':
+        await db.updatePump(action.payload.id, { number: action.payload.number, name: action.payload.name, tank_id: nz(action.payload.tankId), track_id: nz(action.payload.trackId), type: action.payload.type, last_index: action.payload.lastIndex, status: action.payload.status, current_brigade_start_index: action.payload.currentBrigadeStartIndex });
+        break;
+      case 'DELETE_PUMP': await db.deletePump(action.payload); break;
+      case 'ADD_NOZZLE':
+        await db.addNozzle({ id: action.payload.id, pump_id: action.payload.pumpId, name: action.payload.name, last_index: action.payload.lastIndex, start_index: action.payload.startIndex, status: action.payload.status });
+        break;
+      case 'UPDATE_NOZZLE':
+        await db.updateNozzle(action.payload.id, { name: action.payload.name, last_index: action.payload.lastIndex, status: action.payload.status });
+        break;
+      case 'DELETE_NOZZLE': await db.deleteNozzle(action.payload); break;
+      case 'ADD_SUPPLIER':
+        await db.addSupplier({ id: action.payload.id, ref: action.payload.ref, name: action.payload.name, contact: action.payload.contact, phone: action.payload.phone, email: action.payload.email, address: action.payload.address, balance: action.payload.balance, total_purchases: action.payload.totalPurchases, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, type: action.payload.type });
+        break;
+      case 'UPDATE_SUPPLIER':
+        await db.updateSupplier(action.payload.id, { ref: action.payload.ref, name: action.payload.name, contact: action.payload.contact, phone: action.payload.phone, email: action.payload.email, address: action.payload.address, balance: action.payload.balance, total_purchases: action.payload.totalPurchases, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, type: action.payload.type });
+        break;
+      case 'DELETE_SUPPLIER': await db.deleteSupplier(action.payload); break;
+      case 'ADD_CLIENT':
+        await db.addClient({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, cin: action.payload.cin, email: action.payload.email, address: action.payload.address, contact_person: action.payload.contactPerson, balance: action.payload.balance, debt: action.payload.debt, credit_limit: action.payload.creditLimit, payment_delay: action.payload.paymentDelay, type: action.payload.type, payment_mode: action.payload.paymentMode, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, advance_balance: action.payload.advanceBalance ?? 0 });
+        break;
+      case 'UPDATE_CLIENT':
+        await db.updateClient(action.payload.id, { name: action.payload.name, phone: action.payload.phone, cin: action.payload.cin, email: action.payload.email, address: action.payload.address, contact_person: action.payload.contactPerson, balance: action.payload.balance, debt: action.payload.debt, credit_limit: action.payload.creditLimit, payment_delay: action.payload.paymentDelay, type: action.payload.type, payment_mode: action.payload.paymentMode, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, advance_balance: action.payload.advanceBalance ?? 0 });
+        break;
+      case 'DELETE_CLIENT': await db.deleteClient(action.payload); break;
+      case 'ADD_PRODUCT':
+        await db.addProduct({ id: action.payload.id, ref: action.payload.ref, name: action.payload.name, category: action.payload.category, buy_price: action.payload.buyPrice, selling_price: action.payload.sellingPrice, stock: action.payload.stock, min_stock: action.payload.minStock, barcode: action.payload.barcode, image_url: (action.payload as any).imageUrl || action.payload.image, unit: action.payload.unit, brand: action.payload.brand, brand_id: nz(action.payload.brandId), tva_rate: action.payload.tvaRate ?? 0, sell_by_details: action.payload.sellByDetails ?? false, detail_capacity: action.payload.detailCapacity ?? null, detail_unit: action.payload.detailUnit ?? null });
+        break;
+      case 'UPDATE_PRODUCT':
+        await db.updateProduct(action.payload.id, { ref: action.payload.ref, name: action.payload.name, category: action.payload.category, buy_price: action.payload.buyPrice, selling_price: action.payload.sellingPrice, stock: action.payload.stock, min_stock: action.payload.minStock, barcode: action.payload.barcode, image_url: (action.payload as any).imageUrl || action.payload.image, unit: action.payload.unit, brand: action.payload.brand, brand_id: nz(action.payload.brandId), tva_rate: action.payload.tvaRate ?? 0, sell_by_details: action.payload.sellByDetails ?? false, detail_capacity: action.payload.detailCapacity ?? null, detail_unit: action.payload.detailUnit ?? null });
+        break;
+      case 'DELETE_PRODUCT': await db.deleteProduct(action.payload); break;
+      case 'ADD_BRAND':    await db.addBrand({ id: action.payload.id, name: action.payload.name }); break;
+      case 'UPDATE_BRAND': await db.updateBrand(action.payload.id, { name: action.payload.name }); break;
+      case 'DELETE_BRAND': await db.deleteBrand(action.payload); break;
+      case 'ADD_POMPISTE':
+        await db.addPompiste({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, track_id: nz(action.payload.trackId), chef_id: nz(action.payload.chefId), base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        break;
+      case 'UPDATE_POMPISTE':
+        await db.updatePompiste(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, track_id: nz(action.payload.trackId), chef_id: nz(action.payload.chefId), base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        break;
+      case 'DELETE_POMPISTE': await db.deletePompiste(action.payload); break;
+      case 'ADD_BRIGADE_CHEF':
+        await db.addBrigadeChef({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        if (action.payload.pompisteIds?.length) await supabase.from('chef_pompiste_assignments').insert(action.payload.pompisteIds.map(pid => ({ chef_id: action.payload.id, pompiste_id: pid })));
+        break;
+      case 'UPDATE_BRIGADE_CHEF':
+        await db.updateBrigadeChef(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        if (action.payload.pompisteIds !== undefined) { await supabase.from('chef_pompiste_assignments').delete().eq('chef_id', action.payload.id); if (action.payload.pompisteIds.length) await supabase.from('chef_pompiste_assignments').insert(action.payload.pompisteIds.map(pid => ({ chef_id: action.payload.id, pompiste_id: pid }))); }
+        break;
+      case 'DELETE_BRIGADE_CHEF': await db.deleteBrigadeChef(action.payload); break;
+      case 'ADD_GERANT':
+        await db.addGerant({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        break;
+      case 'UPDATE_GERANT':
+        await db.updateGerant(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        break;
+      case 'DELETE_GERANT': await db.deleteGerant(action.payload); break;
+      case 'ADD_MAGASIN_WORKER':
+        await db.addMagasinWorker({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        break;
+      case 'UPDATE_MAGASIN_WORKER':
+        await db.updateMagasinWorker(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: (action.payload as any).photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+        break;
+      case 'DELETE_MAGASIN_WORKER': await db.deleteMagasinWorker(action.payload); break;
+      case 'ADD_BRIGADE': {
+        const b = action.payload;
+        await db.addBrigade({ id: b.id, date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {}, pompiste_assignments: b.pompisteAssignments || [], start_nozzle_indices: b.startNozzleIndices || {}, end_nozzle_indices: b.endNozzleIndices || {}, active_nozzle_ids: b.activeNozzleIds || [], can_reactivate: b.canReactivate ?? false });
+        if (b.pompisteIds?.length) await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid })));
+        break;
+      }
+      case 'UPDATE_BRIGADE': {
+        const b = action.payload;
+        await db.updateBrigade(b.id, { date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, printed_at: b.printedAt, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {}, pompiste_assignments: b.pompisteAssignments || [], start_nozzle_indices: b.startNozzleIndices || {}, end_nozzle_indices: b.endNozzleIndices || {}, active_nozzle_ids: b.activeNozzleIds || [], can_reactivate: b.canReactivate ?? false });
+        if (b.pompisteIds) { await supabase.from('brigade_pompiste_assignments').delete().eq('brigade_id', b.id); if (b.pompisteIds.length) await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid }))); }
+        break;
+      }
+      case 'DELETE_BRIGADE': await db.deleteBrigade(action.payload); break;
+      case 'UPDATE_BRIGADE_STATUS': await db.updateBrigade(action.payload.brigadeId, { is_active: action.payload.isActive, status: action.payload.status }); break;
+      case 'ADD_BRIGADE_ACCOUNTING': {
+        const a = action.payload;
+        await db.addBrigadeAccounting({ id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
+        if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: j.accountingId, client_id: j.clientId, amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        break;
+      }
+      case 'UPDATE_BRIGADE_ACCOUNTING': {
+        const a = action.payload;
+        await db.updateBrigadeAccounting(a.id, { brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
+        break;
+      }
+      case 'ADD_FUEL_SALE':
+        await db.addFuelSale({ id: action.payload.id, date: action.payload.date, pump_id: action.payload.pumpId, liters: action.payload.liters, price_per_liter: action.payload.pricePerLiter, total: action.payload.total, payment_mode: action.payload.paymentMode, client_id: nz(action.payload.clientId), bon_number: action.payload.bonNumber, bon_photo_url: (action.payload as any).bonPhotoUrl || action.payload.bonPhoto, pompiste_id: nz(action.payload.pompisteId), brigade_id: nz(action.payload.brigadeId) });
+        break;
+      case 'UPDATE_FUEL_SALE':
+        await db.updateFuelSale(action.payload.id, { pump_id: action.payload.pumpId, liters: action.payload.liters, price_per_liter: action.payload.pricePerLiter, total: action.payload.total, payment_mode: action.payload.paymentMode, client_id: nz(action.payload.clientId), bon_number: action.payload.bonNumber, bon_photo_url: (action.payload as any).bonPhotoUrl });
+        break;
+      case 'DELETE_FUEL_SALE': await db.deleteFuelSale(action.payload); break;
+      case 'ADD_SHOP_SALE': {
+        const s = action.payload;
+        await db.addShopSale({ id: s.id, date: s.date, client_id: nz(s.clientId), seller_id: nz(s.sellerId), subtotal: s.subtotal, tva_amount: s.tvaAmount ?? 0, total: s.total, payment_mode: s.paymentMode, cheque_number: s.chequeNumber, bon_number: s.bonNumber, bon_photo_url: (s as any).bonPhotoUrl, amount_paid: s.amountPaid ?? 0, rest: s.rest ?? 0, status: s.status, notes: s.notes, invoice_image_url: s.invoiceImageUrl ?? null });
+        if (s.items?.length) await db.addShopSaleItems(s.items.map(i => ({ sale_id: s.id, product_id: i.productId, product_name: i.productName, quantity: i.quantity, price: i.price, tva: i.tva ?? 0 })));
+        break;
+      }
+      case 'UPDATE_SHOP_SALE':
+        await db.updateShopSale(action.payload.id, { subtotal: action.payload.subtotal, tva_amount: action.payload.tvaAmount, total: action.payload.total, payment_mode: action.payload.paymentMode, amount_paid: action.payload.amountPaid, rest: action.payload.rest, status: action.payload.status, notes: action.payload.notes, printed_at: action.payload.printedAt });
+        break;
+      case 'DELETE_SHOP_SALE': await db.deleteShopSale(action.payload); break;
+      case 'ADD_DELIVERY_NOTE': {
+        const d = action.payload;
+        await db.addDeliveryNote({ id: d.id, date: d.date, supplier_id: nz(d.supplierId), tank_id: nz(d.tankId), liters: d.liters, price_per_liter: d.pricePerLiter, status: d.status, total: d.total, expiry_date: nz(d.expiryDate), bl_number: d.blNumber ?? null, bl_date: nz(d.blDate), creation_date: nz(d.creationDate), immatriculation: d.immatriculation ?? null, driver_id: nz(d.driverId) });
+        if (d.items?.length) await supabase.from('delivery_note_items').insert(d.items.map(it => ({ id: it.id, delivery_note_id: d.id, tank_id: nz(it.tankId), liters: it.liters, price_per_liter: it.pricePerLiter, total: it.total })));
+        if (d.photos?.length) for (const url of d.photos) await db.addDeliveryNotePhoto({ delivery_note_id: d.id, photo_url: url });
+        if (d.payments?.length) for (const p of d.payments) await db.addDeliveryNotePayment({ id: p.id, delivery_note_id: d.id, date: p.date, amount: p.amount, mode: p.mode, receipt_number: p.receiptNumber, receipt_photo_url: p.receiptPhoto });
+        break;
+      }
+      case 'UPDATE_DELIVERY_NOTE': {
+        const d = action.payload;
+        await db.updateDeliveryNote(d.id, { date: d.date, supplier_id: nz(d.supplierId), tank_id: nz(d.tankId), liters: d.liters, price_per_liter: d.pricePerLiter, status: d.status, total: d.total, expiry_date: nz(d.expiryDate), bl_number: d.blNumber ?? null, bl_date: nz(d.blDate), creation_date: nz(d.creationDate), immatriculation: d.immatriculation ?? null, driver_id: nz(d.driverId) });
+        await supabase.from('delivery_note_items').delete().eq('delivery_note_id', d.id);
+        if (d.items?.length) await supabase.from('delivery_note_items').insert(d.items.map(it => ({ id: it.id, delivery_note_id: d.id, tank_id: nz(it.tankId), liters: it.liters, price_per_liter: it.pricePerLiter, total: it.total })));
+        // Re-sync photos so newly-attached scans persist on edit
+        await supabase.from('delivery_note_photos').delete().eq('delivery_note_id', d.id);
+        if (d.photos?.length) for (const url of d.photos) await db.addDeliveryNotePhoto({ delivery_note_id: d.id, photo_url: url });
+        break;
+      }
+      case 'DELETE_DELIVERY_NOTE': await db.deleteDeliveryNote(action.payload); break;
+      case 'ADD_FUEL_INVOICE': {
+        const fi = action.payload;
+        await supabase.from('fuel_invoices').insert({
+          id: fi.id, invoice_number: fi.invoiceNumber, invoice_date: fi.invoiceDate,
+          creation_date: fi.creationDate, reception_date: nz(fi.receptionDate),
+          tva_active: fi.tvaActive, tva_rate: fi.tvaRate, subtotal: fi.subtotal,
+          tva_amount: fi.tvaAmount, total: fi.total, amount_paid: fi.amountPaid,
+          rest: fi.rest, status: fi.status, appointment_date: nz(fi.appointmentDate),
+          appointment_amount: fi.appointmentAmount ?? null, appointment_notes: fi.appointmentNotes ?? null,
+          invoice_image_url: fi.invoiceImageUrl ?? null, notes: fi.notes ?? null
+        });
+        if (fi.deliveryNoteIds.length > 0) {
+          await supabase.from('fuel_invoice_bls').insert(
+            fi.deliveryNoteIds.map(dnId => ({ invoice_id: fi.id, delivery_note_id: dnId }))
+          );
+        }
+        break;
+      }
+      case 'UPDATE_FUEL_INVOICE': {
+        const ufi = action.payload;
+        await supabase.from('fuel_invoices').update({
+          invoice_number: ufi.invoiceNumber, invoice_date: ufi.invoiceDate,
+          reception_date: nz(ufi.receptionDate), tva_active: ufi.tvaActive, tva_rate: ufi.tvaRate,
+          subtotal: ufi.subtotal, tva_amount: ufi.tvaAmount, total: ufi.total,
+          amount_paid: ufi.amountPaid, rest: ufi.rest, status: ufi.status,
+          appointment_date: nz(ufi.appointmentDate), appointment_amount: ufi.appointmentAmount ?? null,
+          appointment_notes: ufi.appointmentNotes ?? null,
+          invoice_image_url: ufi.invoiceImageUrl ?? null, notes: ufi.notes ?? null, updated_at: new Date().toISOString()
+        }).eq('id', ufi.id);
+        await supabase.from('fuel_invoice_bls').delete().eq('invoice_id', ufi.id);
+        if (ufi.deliveryNoteIds.length > 0) {
+          await supabase.from('fuel_invoice_bls').insert(
+            ufi.deliveryNoteIds.map(dnId => ({ invoice_id: ufi.id, delivery_note_id: dnId }))
+          );
+        }
+        break;
+      }
+      case 'DELETE_FUEL_INVOICE':
+        await supabase.from('fuel_invoices').delete().eq('id', action.payload);
+        break;
+      case 'ADD_FUEL_RECEIPT': {
+        const fr = action.payload;
+        await supabase.from('fuel_receipts').insert({
+          id: fr.id, receipt_number: fr.receiptNumber, receipt_date: fr.receiptDate,
+          creation_date: fr.creationDate, total_invoiced: fr.totalInvoiced,
+          amount_paid: fr.amountPaid, rest: fr.rest, is_debt_payment: fr.isDebtPayment,
+          receipt_image_url: fr.receiptImageUrl ?? null, notes: fr.notes ?? null
+        });
+        if (fr.invoiceIds.length > 0) {
+          await supabase.from('fuel_receipt_invoices').insert(
+            fr.invoiceIds.map(invId => ({ receipt_id: fr.id, invoice_id: invId, amount: fr.amountPaid / fr.invoiceIds.length }))
+          );
+        }
+        break;
+      }
+      case 'UPDATE_FUEL_RECEIPT': {
+        const ufr = action.payload;
+        await supabase.from('fuel_receipts').update({
+          receipt_number: ufr.receiptNumber, receipt_date: ufr.receiptDate,
+          total_invoiced: ufr.totalInvoiced, amount_paid: ufr.amountPaid, rest: ufr.rest,
+          is_debt_payment: ufr.isDebtPayment, receipt_image_url: ufr.receiptImageUrl ?? null,
+          notes: ufr.notes ?? null, updated_at: new Date().toISOString()
+        }).eq('id', ufr.id);
+        await supabase.from('fuel_receipt_invoices').delete().eq('receipt_id', ufr.id);
+        if (ufr.invoiceIds.length > 0) {
+          await supabase.from('fuel_receipt_invoices').insert(
+            ufr.invoiceIds.map(invId => ({ receipt_id: ufr.id, invoice_id: invId, amount: ufr.amountPaid }))
+          );
+        }
+        break;
+      }
+      case 'DELETE_FUEL_RECEIPT':
+        await supabase.from('fuel_receipts').delete().eq('id', action.payload);
+        break;
+      case 'ADD_PURCHASE': {
+        const p = action.payload;
+        await db.addPurchase({ id: p.id, date: p.date, supplier_id: nz(p.supplierId), invoice_number: p.invoiceNumber, due_date: nz(p.dueDate), driver_id: nz(p.driverId), total: p.total, amount_paid: p.amountPaid, rest: p.rest, status: p.status, payment_mode: p.paymentMode, cheque_number: p.chequeNumber, linked_delivery_note_id: nz(p.linkedDeliveryNoteId), notes: p.notes, type: p.type, tva_rate: p.tvaRate ?? 0, tva_active: p.tvaActive ?? false, tank_id: nz(p.tankId), receipt_photo_url: p.receiptPhoto });
+        if (p.items?.length) await db.addPurchaseItems(p.items.map(i => ({ purchase_id: p.id, product_id: nz(i.productId), product_name: i.productName, quantity: i.quantity, buy_price: i.buyPrice, selling_price: i.sellingPrice, min_stock: i.minStock, unit: i.unit, total: i.total, tank_id: nz(i.tankId), tva_active: i.tvaActive ?? false, tva_rate: i.tvaRate ?? 0 })));
+        if (p.payments?.length) for (const pay of p.payments) await db.addPurchasePayment({ id: pay.id, purchase_id: p.id, date: pay.date, amount: pay.amount, mode: pay.mode, cheque_number: pay.chequeNumber, notes: pay.notes });
+        break;
+      }
+      case 'UPDATE_PURCHASE':
+        await db.updatePurchase(action.payload.id, { total: action.payload.total, amount_paid: action.payload.amountPaid, rest: action.payload.rest, status: action.payload.status, payment_mode: action.payload.paymentMode, cheque_number: action.payload.chequeNumber, notes: action.payload.notes, receipt_photo_url: action.payload.receiptPhoto });
+        break;
+      case 'DELETE_PURCHASE': await db.deletePurchase(action.payload); break;
+      case 'ADD_EXPENSE':
+        await db.addExpense({ id: action.payload.id, date: action.payload.date, category: action.payload.category, amount: action.payload.amount, description: action.payload.description, payment_mode: action.payload.paymentMode, cheque_number: action.payload.chequeNumber, paid_by: action.payload.paidBy, recipient: action.payload.recipient, status: action.payload.status, receipt_url: (action.payload as any).receiptUrl || action.payload.receipt, created_by: nz(action.payload.createdBy) });
+        break;
+      case 'UPDATE_EXPENSE':
+        await db.updateExpense(action.payload.id, { date: action.payload.date, category: action.payload.category, amount: action.payload.amount, description: action.payload.description, payment_mode: action.payload.paymentMode, cheque_number: action.payload.chequeNumber, paid_by: action.payload.paidBy, recipient: action.payload.recipient, status: action.payload.status, receipt_url: (action.payload as any).receiptUrl });
+        break;
+      case 'DELETE_EXPENSE': await db.deleteExpense(action.payload); break;
+      case 'ADD_INVENTORY':
+      case 'SAVE_INVENTORY':
+        await db.addInventory({ id: action.payload.id, name: action.payload.name, description: action.payload.description, date: action.payload.date, user_name: action.payload.user, type: action.payload.type, status: action.payload.status, fuel_gaps: action.payload.fuelGaps, pump_index_gaps: action.payload.pumpIndexGaps || [], product_gaps: action.payload.productGaps, adjustment_reason: action.payload.adjustmentReason, adjusted_at: nz(action.payload.adjustedAt) });
+        break;
+      case 'UPDATE_INVENTORY':
+        await db.updateInventory(action.payload.id, { name: action.payload.name, status: action.payload.status, fuel_gaps: action.payload.fuelGaps, pump_index_gaps: action.payload.pumpIndexGaps || [], product_gaps: action.payload.productGaps, adjustment_reason: action.payload.adjustmentReason, adjusted_at: nz(action.payload.adjustedAt) });
+        break;
+      case 'DELETE_INVENTORY': await db.deleteInventory(action.payload); break;
+      case 'ADD_DAILY_REPORT':
+        await db.addDailyReport({ id: action.payload.id, date: action.payload.date, fuel_revenue: action.payload.fuelRevenue, shop_revenue: action.payload.shopRevenue, total_expenses: action.payload.totalExpenses, cash_to_deposit: action.payload.cashToDeposit, tank_variations: action.payload.tankVariations, brigade_ids: action.payload.brigadeIds });
+        break;
+      case 'SET_SETTINGS':
+        await db.saveSettings({ name: action.payload.name, logo_url: (action.payload as any).logoUrl || action.payload.logo, address: action.payload.address, phone: action.payload.phone, email: action.payload.email, fiscal_id: action.payload.fiscalId, rc: action.payload.rc, fuel_prices: action.payload.fuelPrices, fuel_buy_prices: action.payload.fuelBuyPrices || emptySettings.fuelBuyPrices, conversion_tables: action.payload.conversionTables, product_categories: action.payload.productCategories, expense_categories: action.payload.expenseCategories, product_units: action.payload.productUnits || DEFAULT_PRODUCT_UNITS, decalage_positif_actif: action.payload.decalagePositifActif, decalage_negatif_actif: action.payload.decalageNegatifActif });
+        break;
+      case 'UPDATE_WORKER_ACOMPTE':
+        await db.addWorkerAcompte({ id: action.payload.acompte.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, date: action.payload.acompte.date, amount: action.payload.acompte.amount, description: action.payload.acompte.description, is_paid: action.payload.acompte.isPaid, month_paid: action.payload.acompte.monthPaid });
+        break;
+      case 'UPDATE_WORKER_ABSENCE':
+        await db.addWorkerAbsence({ id: action.payload.absence.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, date: action.payload.absence.date, cost: action.payload.absence.cost, description: action.payload.absence.description, is_paid: action.payload.absence.isPaid, month_paid: action.payload.absence.monthPaid });
+        break;
+      case 'ADD_WORKER_PAYMENT':
+        await db.addWorkerPaymentRecord({ id: action.payload.payment.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, month: action.payload.payment.month, base_salary: action.payload.payment.baseSalary, total_acomptes: action.payload.payment.totalAcomptes, total_absences: action.payload.payment.totalAbsences, bonus_decalage: action.payload.payment.bonusDecalage ?? 0, retenue_decalage: action.payload.payment.retenueDecalage ?? 0, net_salary: action.payload.payment.netSalary, payment_date: action.payload.payment.paymentDate, payment_mode: action.payload.payment.paymentMode, cheque_number: action.payload.payment.chequeNumber, notes: action.payload.payment.notes, is_paid: action.payload.payment.isPaid });
+        break;
+      case 'MARK_PAYMENT_PAID': await db.markPaymentPaid(action.payload.paymentId); break;
+      case 'ADD_SUPPLIER_APPOINTMENT':
+        await db.addSupplierAppointment({ id: action.payload.appointment.id, supplier_id: action.payload.supplierId, purchase_id: nz(action.payload.appointment.purchaseId), date: action.payload.appointment.date, amount: action.payload.appointment.amount, notes: action.payload.appointment.notes, is_paid: action.payload.appointment.isPaid });
+        break;
+      case 'ADD_SUPPLIER_PAYMENT':
+        await db.addSupplierDebtPayment({ id: action.payload.payment.id, supplier_id: action.payload.supplierId, purchase_id: nz(action.payload.payment.purchaseId), delivery_note_id: nz(action.payload.payment.deliveryNoteId), date: action.payload.payment.date, amount: action.payload.payment.amount, total_due: action.payload.payment.totalDue, rest: action.payload.payment.rest, payment_mode: action.payload.payment.paymentMode, cheque_number: action.payload.payment.chequeNumber, notes: action.payload.payment.notes });
+        break;
+      case 'ADD_CLIENT_APPOINTMENT':
+        await db.addClientAppointment({ id: action.payload.appointment.id, client_id: action.payload.clientId, sale_id: nz(action.payload.appointment.saleId), date: action.payload.appointment.date, amount: action.payload.appointment.amount, notes: action.payload.appointment.notes, is_paid: action.payload.appointment.isPaid });
+        break;
+      case 'ADD_CLIENT_PAYMENT':
+        await db.addClientTransaction({ id: action.payload.payment.id, client_id: action.payload.clientId, date: action.payload.payment.date, type: action.payload.payment.type, amount: action.payload.payment.amount, mode: action.payload.payment.mode, receipt_number: action.payload.payment.receiptNumber, receipt_photo_url: action.payload.payment.receiptPhoto, notes: action.payload.payment.notes });
+        break;
+      case 'UPDATE_PRODUCT_STOCK': {
+        // maybeSingle() avoids 406 if product was concurrently deleted
+        const { data } = await supabase.from('products').select('stock, buy_price, selling_price').eq('id', action.payload.productId).maybeSingle();
+        if (data) await supabase.from('products').update({ stock: (+data.stock) + action.payload.quantity, buy_price: action.payload.buyPrice ?? data.buy_price, selling_price: action.payload.sellPrice ?? data.selling_price }).eq('id', action.payload.productId);
+        break;
+      }
+      case 'ADD_DRIVER': await db.addDriver({ id: action.payload.id, name: action.payload.name }); break;
+      case 'DELETE_DRIVER': await db.deleteDriver(action.payload); break;
+      case 'LOG_ACTIVITY': await db.addActivityLog({ user_id: action.payload.userId, action: action.payload.action, details: action.payload.details }); break;
+      default: break;
+    }
+}
+
+// ─── Context ──────────────────────────────────────────────────────────────────
+
+const StateContext    = createContext<AppState | undefined>(undefined);
+const DispatchContext = createContext<React.Dispatch<AppAction> | undefined>(undefined);
+
+// ─── refetchEntityAfterAction ─────────────────────────────────────────────────
+// After a failed write we call this to re-fetch the affected slice from
+// Supabase and dispatch HYDRATE so the optimistic change is reverted.
+// Also called after successful writes on tables with sub-records (brigades,
+// shop sales, etc.) to keep related data consistent.
+
+async function refetchEntityAfterAction(
+  action: AppAction,
+  dispatch: React.Dispatch<AppAction>
+): Promise<void> {
+  try {
+    switch (action.type) {
+      // ── Tanks ───────────────────────────────────────────────────────────
+      case 'ADD_TANK': case 'UPDATE_TANK': case 'DELETE_TANK': {
+        const raw = await db.getTanks();
+        dispatch({ type: 'HYDRATE', payload: { tanks: (raw as any[]).map(mapTank) } });
+        break;
+      }
+      // ── Pumps ───────────────────────────────────────────────────────────
+      case 'ADD_PUMP': case 'UPDATE_PUMP': case 'DELETE_PUMP': {
+        const raw = await db.getPumps();
+        dispatch({ type: 'HYDRATE', payload: { pumps: (raw as any[]).map(mapPump) } });
+        break;
+      }
+      // ── Tracks ──────────────────────────────────────────────────────────
+      case 'ADD_TRACK': case 'UPDATE_TRACK': case 'DELETE_TRACK': {
+        const raw = await db.getTracks();
+        dispatch({ type: 'HYDRATE', payload: { tracks: (raw as any[]).map(mapTrack) } });
+        break;
+      }
+      // ── Pompistes ───────────────────────────────────────────────────────
+      case 'ADD_POMPISTE': case 'UPDATE_POMPISTE': case 'DELETE_POMPISTE':
+      case 'UPDATE_WORKER_ACOMPTE': case 'UPDATE_WORKER_ABSENCE':
+      case 'ADD_WORKER_PAYMENT': case 'MARK_PAYMENT_PAID':
+      case 'UPDATE_WORKER_PERMISSIONS': {
+        const raw = await db.getPompistes();
+        const aRaw = await supabase.from('worker_acomptes').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []);
+        const bRaw = await supabase.from('worker_absences').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []);
+        const pRaw = await supabase.from('worker_payment_records').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []);
+        const pompistes = (raw as any[]).map(p => {
+          const m = mapPompiste(p);
+          m.acomptes      = (aRaw as any[]).filter(a => a.worker_id === p.id).map(mapAcompte);
+          m.absences      = (bRaw as any[]).filter(a => a.worker_id === p.id).map(mapAbsence);
+          m.paymentRecord = (pRaw as any[]).filter(r => r.worker_id === p.id).map(mapPaymentRecord);
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { pompistes } });
+        break;
+      }
+      // ── Brigade Chefs ────────────────────────────────────────────────────
+      case 'ADD_BRIGADE_CHEF': case 'UPDATE_BRIGADE_CHEF': case 'DELETE_BRIGADE_CHEF': {
+        const raw = await db.getBrigadeChefs();
+        const assignRaw = await supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []);
+        const brigadeChefs = (raw as any[]).map(c => {
+          const m = mapBrigadeChef(c);
+          m.pompisteIds = (assignRaw as any[]).filter(a => a.chef_id === c.id).map(a => a.pompiste_id);
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { brigadeChefs } });
+        break;
+      }
+      // ── Gérants ──────────────────────────────────────────────────────────
+      case 'ADD_GERANT': case 'UPDATE_GERANT': case 'DELETE_GERANT': {
+        const raw = await db.getGerants();
+        dispatch({ type: 'HYDRATE', payload: { gerants: (raw as any[]).map(mapGerant) } });
+        break;
+      }
+      // ── Magasin workers ───────────────────────────────────────────────────
+      case 'ADD_MAGASIN_WORKER': case 'UPDATE_MAGASIN_WORKER': case 'DELETE_MAGASIN_WORKER': {
+        const raw = await db.getMagasinWorkers();
+        dispatch({ type: 'HYDRATE', payload: { magasinWorkers: (raw as any[]).map(mapMagasinWorker) } });
+        break;
+      }
+      // ── Suppliers ─────────────────────────────────────────────────────────
+      case 'ADD_SUPPLIER': case 'UPDATE_SUPPLIER': case 'DELETE_SUPPLIER':
+      case 'ADD_SUPPLIER_PAYMENT': case 'ADD_SUPPLIER_APPOINTMENT': {
+        const raw = await db.getSuppliers();
+        const apptRaw = await supabase.from('supplier_appointments').select('*').then(r => r.data ?? []);
+        const debtRaw = await supabase.from('supplier_debt_payments').select('*').then(r => r.data ?? []);
+        const suppliers = (raw as any[]).map(s => {
+          const m = mapSupplier(s);
+          m.appointments = (apptRaw as any[]).filter(a => a.supplier_id === s.id).map(a => ({ id: a.id, purchaseId: a.purchase_id, date: a.date, amount: +a.amount, notes: a.notes, isPaid: a.is_paid }));
+          m.debtPayments = (debtRaw as any[]).filter(p => p.supplier_id === s.id).map(p => ({ id: p.id, purchaseId: p.purchase_id, deliveryNoteId: p.delivery_note_id, date: p.date, amount: +p.amount, totalDue: +p.total_due, rest: +p.rest, paymentMode: p.payment_mode, chequeNumber: p.cheque_number, notes: p.notes }));
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { suppliers } });
+        break;
+      }
+      // ── Clients ───────────────────────────────────────────────────────────
+      case 'ADD_CLIENT': case 'UPDATE_CLIENT': case 'DELETE_CLIENT':
+      case 'ADD_CLIENT_PAYMENT': case 'ADD_CLIENT_APPOINTMENT': {
+        const raw = await db.getClients();
+        const apptRaw = await supabase.from('client_appointments').select('*').then(r => r.data ?? []);
+        const txRaw   = await supabase.from('client_transactions').select('*').order('created_at', { ascending: false }).limit(500).then(r => r.data ?? []);
+        const clients = (raw as any[]).map(c => {
+          const m = mapClient(c);
+          m.appointments      = (apptRaw as any[]).filter(a => a.client_id === c.id).map(a => ({ id: a.id, saleId: a.sale_id, date: a.date, amount: +a.amount, notes: a.notes, isPaid: a.is_paid }));
+          m.transactionHistory = (txRaw as any[]).filter(t => t.client_id === c.id).map(t => ({ id: t.id, date: t.date, type: t.type, amount: +t.amount, mode: t.mode, receiptNumber: t.receipt_number, receiptPhoto: t.receipt_photo_url, notes: t.notes }));
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { clients } });
+        break;
+      }
+      // ── Products / Brands ─────────────────────────────────────────────────
+      case 'ADD_PRODUCT': case 'UPDATE_PRODUCT': case 'DELETE_PRODUCT': case 'UPDATE_PRODUCT_STOCK': {
+        const raw = await db.getProducts();
+        dispatch({ type: 'HYDRATE', payload: { products: (raw as any[]).map(mapProduct) } });
+        break;
+      }
+      case 'ADD_BRAND': case 'UPDATE_BRAND': case 'DELETE_BRAND': {
+        const raw = await db.getBrands();
+        dispatch({ type: 'HYDRATE', payload: { productBrands: (raw as any[]).map(mapBrand) } });
+        break;
+      }
+      // ── Brigades ──────────────────────────────────────────────────────────
+      case 'ADD_BRIGADE': case 'UPDATE_BRIGADE': case 'DELETE_BRIGADE': case 'UPDATE_BRIGADE_STATUS': {
+        const raw       = await db.getBrigades();
+        const assignRaw = await supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []);
+        const brigades  = (raw as any[]).map(b => {
+          const m = mapBrigade(b);
+          m.pompisteIds = (assignRaw as any[]).filter(a => a.brigade_id === b.id).map(a => a.pompiste_id);
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { brigades } });
+        break;
+      }
+      // ── Fuel Sales ────────────────────────────────────────────────────────
+      case 'ADD_FUEL_SALE': case 'UPDATE_FUEL_SALE': case 'DELETE_FUEL_SALE': {
+        const { data } = await supabase.from('fuel_sales').select('*').order('created_at', { ascending: false }).limit(500);
+        dispatch({ type: 'HYDRATE', payload: { fuelSales: ((data ?? []) as any[]).map(mapFuelSale) } });
+        break;
+      }
+      // ── Shop Sales ────────────────────────────────────────────────────────
+      case 'ADD_SHOP_SALE': case 'UPDATE_SHOP_SALE': case 'DELETE_SHOP_SALE': {
+        const { data: salesData } = await supabase.from('shop_sales').select('*').order('created_at', { ascending: false }).limit(500);
+        const { data: itemsData } = await supabase.from('shop_sale_items').select('*');
+        if (salesData) {
+          const shopSales = (salesData as any[]).map(s => {
+            const m = mapShopSale(s);
+            m.items = ((itemsData ?? []) as any[]).filter((i: any) => i.sale_id === s.id).map((i: any) => ({ productId: i.product_id, productName: i.product_name, quantity: +i.quantity, price: +i.price, tva: +(i.tva ?? 0) }));
+            return m;
+          });
+          dispatch({ type: 'HYDRATE', payload: { shopSales } });
+        }
+        break;
+      }
+      // ── Delivery Notes ────────────────────────────────────────────────────
+      case 'ADD_DELIVERY_NOTE': case 'UPDATE_DELIVERY_NOTE': case 'DELETE_DELIVERY_NOTE': {
+        const raw          = await db.getDeliveryNotes();
+        const photosData   = await supabase.from('delivery_note_photos').select('*').then(r => r.data ?? []);
+        const paymentsData = await supabase.from('delivery_note_payments').select('*').then(r => r.data ?? []);
+        const itemsData    = await supabase.from('delivery_note_items').select('*').then(r => r.data ?? []);
+        const deliveryNotes = (raw as any[]).map(d => {
+          const m = mapDeliveryNote(d);
+          m.photos   = (photosData as any[]).filter(p => p.delivery_note_id === d.id).map(p => p.photo_url);
+          m.items    = (itemsData as any[]).filter(i => i.delivery_note_id === d.id).map(mapDeliveryNoteItem);
+          m.payments = (paymentsData as any[]).filter(p => p.delivery_note_id === d.id).map(p => ({ id: p.id, date: p.date, amount: +p.amount, mode: p.mode, receiptNumber: p.receipt_number, receiptPhoto: p.receipt_photo_url }));
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { deliveryNotes } });
+        break;
+      }
+      // ── Fuel Invoices ─────────────────────────────────────────────────────
+      case 'ADD_FUEL_INVOICE': case 'UPDATE_FUEL_INVOICE': case 'DELETE_FUEL_INVOICE': {
+        const raw    = await supabase.from('fuel_invoices').select('*').order('created_at', { ascending: false }).limit(500).then(r => r.data ?? []);
+        const blsRaw = await supabase.from('fuel_invoice_bls').select('*').then(r => r.data ?? []);
+        const fuelInvoices = (raw as any[]).map(r => {
+          const m = mapFuelInvoice(r);
+          m.deliveryNoteIds = (blsRaw as any[]).filter(b => b.invoice_id === r.id).map(b => b.delivery_note_id);
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { fuelInvoices } });
+        break;
+      }
+      // ── Fuel Receipts ─────────────────────────────────────────────────────
+      case 'ADD_FUEL_RECEIPT': case 'UPDATE_FUEL_RECEIPT': case 'DELETE_FUEL_RECEIPT': {
+        const raw     = await supabase.from('fuel_receipts').select('*').order('created_at', { ascending: false }).limit(500).then(r => r.data ?? []);
+        const invsRaw = await supabase.from('fuel_receipt_invoices').select('*').then(r => r.data ?? []);
+        const fuelReceipts = (raw as any[]).map(r => {
+          const m = mapFuelReceipt(r);
+          m.invoiceIds = (invsRaw as any[]).filter(b => b.receipt_id === r.id).map(b => b.invoice_id);
+          return m;
+        });
+        dispatch({ type: 'HYDRATE', payload: { fuelReceipts } });
+        break;
+      }
+      // ── Purchases ─────────────────────────────────────────────────────────
+      case 'ADD_PURCHASE': case 'UPDATE_PURCHASE': case 'DELETE_PURCHASE': {
+        const { data: purchasesData } = await supabase.from('purchases').select('*').order('created_at', { ascending: false }).limit(500);
+        const { data: itemsData }    = await supabase.from('purchase_items').select('*');
+        const { data: paymentsData } = await supabase.from('purchase_payments').select('*');
+        if (purchasesData) {
+          const purchases = (purchasesData as any[]).map(p => {
+            const m = mapPurchase(p);
+            m.items    = ((itemsData ?? []) as any[]).filter((i: any) => i.purchase_id === p.id).map((i: any) => ({ productId: i.product_id, productName: i.product_name, quantity: +i.quantity, buyPrice: +i.buy_price, sellingPrice: +i.selling_price, minStock: i.min_stock ? +i.min_stock : undefined, unit: i.unit, total: +i.total, tankId: i.tank_id, tvaActive: i.tva_active, tvaRate: +(i.tva_rate ?? 0) }));
+            m.payments = ((paymentsData ?? []) as any[]).filter((pay: any) => pay.purchase_id === p.id).map((pay: any) => ({ id: pay.id, date: pay.date, amount: +pay.amount, mode: pay.mode, chequeNumber: pay.cheque_number, notes: pay.notes }));
+            return m;
+          });
+          dispatch({ type: 'HYDRATE', payload: { purchases } });
+        }
+        break;
+      }
+      // ── Expenses ──────────────────────────────────────────────────────────
+      case 'ADD_EXPENSE': case 'UPDATE_EXPENSE': case 'DELETE_EXPENSE': {
+        const raw = await db.getExpenses();
+        dispatch({ type: 'HYDRATE', payload: { expenses: (raw as any[]).map(mapExpense) } });
+        break;
+      }
+      // ── Inventories ───────────────────────────────────────────────────────
+      case 'ADD_INVENTORY': case 'UPDATE_INVENTORY': case 'DELETE_INVENTORY': case 'SAVE_INVENTORY': {
+        const raw = await db.getInventories();
+        dispatch({ type: 'HYDRATE', payload: { inventories: (raw as any[]).map(mapInventory) } });
+        break;
+      }
+      // ── Daily Reports ─────────────────────────────────────────────────────
+      case 'ADD_DAILY_REPORT': {
+        const raw = await db.getDailyReports();
+        dispatch({ type: 'HYDRATE', payload: { dailyReports: (raw as any[]).map(mapDailyReport) } });
+        break;
+      }
+      // ── Settings ──────────────────────────────────────────────────────────
+      case 'SET_SETTINGS': {
+        const raw = await db.getSettings();
+        if (raw) dispatch({ type: 'HYDRATE', payload: { settings: mapSettings(raw) } });
+        break;
+      }
+      default: break;
+    }
+  } catch (refetchErr) {
+    console.error('[refetchEntityAfterAction] Refetch failed after error:', refetchErr);
+  }
+}
+
+// ─── AppProvider ──────────────────────────────────────────────────────────────
+
+export const AppProvider = ({ children }: { children: ReactNode }) => {
+  const [state, dispatch] = useReducer(appReducer, initialState);
+
+  // Guard against double-invocation (StrictMode dev or React 18 Concurrent Mode).
+  // Even though StrictMode has been removed from main.tsx, this ref makes the
+  // hydration truly idempotent and safe to re-enable later.
+  const hydrationStarted = useRef(false);
+  // Prevents concurrent re-hydrations (e.g. TOKEN_REFRESHED fires while initial
+  // hydrate is still in progress).
+  const isHydrating = useRef(false);
+
+  // ── Initial hydration from Supabase (two-phase progressive loading) ────────
+  useEffect(() => {
+    if (hydrationStarted.current) return;
+    hydrationStarted.current = true;
+
+    let cancelled = false;
+    let phase1Timeout: ReturnType<typeof setTimeout>;
+
+    async function hydrate() {
+      dispatch({ type: 'SET_LOADING', payload: true });
+
+      // ── DB Connectivity diagnostic ───────────────────────────────────────
+      // Try a tiny read on startup. If it fails (RLS, wrong credentials, network)
+      // we surface a visible error instead of loading silently for 30 s.
+      {
+        const { error: connectErr } = await supabase
+          .from('station_settings')
+          .select('id')
+          .limit(1);
+        if (connectErr) {
+          console.error('[DB] Connectivity check failed:', connectErr.message, connectErr);
+          dispatch({
+            type: 'ADD_TOAST',
+            payload: {
+              type: 'error',
+              message:
+                `⚠️ Connexion à la base de données échouée: ${connectErr.message}. ` +
+                `Vérifiez vos politiques RLS Supabase et rechargez la page.`,
+            },
+          });
+        } else {
+          console.log('[DB] Connectivity check OK');
+        }
+      }
+
+      // 15-second timeout guards Phase 1 only (Phase 2 uses safeQ per table)
+      phase1Timeout = setTimeout(() => {
+        if (!cancelled) {
+          console.error('[hydrate] Phase 1 timeout: releasing loading spinner');
+          dispatch({ type: 'SET_LOADING', payload: false });
+          dispatch({
+            type: 'ADD_TOAST',
+            payload: { type: 'error', message: 'Délai de chargement dépassé. Certaines données peuvent être manquantes.' },
+          });
+        }
+      }, 15000);
+
+      try {
+        // ── PHASE 1: Small/critical tables → unblock the UI ─────────────
+        // We load only what is needed for the app shell and navigation to render.
+        // Transactional tables (fuel_sales, shop_sales, purchases, …) are deferred
+        // to Phase 2 so the first paint is not blocked by large-table scans.
+        console.log('[hydrate] Phase 1 – critical tables…');
+
+        const [
+          tanksRaw, pumpsRaw, nozzlesRaw, tracksRaw, driversRaw,
+          productsRaw, brandsRaw,
+          pompistesRaw, chefsRaw, gerantsRaw, magasinRaw,
+          clientsRaw, suppliersRaw,
+          brigadesRaw, settingsRaw,
+          brigadeAssignmentsRaw, chefAssignmentsRaw,
+        ] = await Promise.all([
+          db.getTanks(),
+          db.getPumps(),
+          db.getNozzles(),
+          db.getTracks(),
+          db.getDrivers(),
+          db.getProducts(),
+          db.getBrands(),
+          db.getPompistes(),
+          db.getBrigadeChefs(),
+          db.getGerants(),
+          db.getMagasinWorkers(),
+          db.getClients(),
+          db.getSuppliers(),
+          db.getBrigades(),
+          db.getSettings(),
+          supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []),
+          supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []),
+        ]);
+
+        if (cancelled) return;
+
+        // Map Phase 1 data
+        const tanks   = (tanksRaw  as any[]).map(mapTank);
+        const pumps   = (pumpsRaw  as any[]).map(mapPump);
+        const pumpNozzles = (nozzlesRaw as any[]).map(mapNozzle);
+        const tracks  = (tracksRaw as any[]).map(mapTrack);
+        const drivers = (driversRaw as any[]).map(mapDriver);
+
+        const products = (productsRaw as any[]).map(mapProduct);
+        const brands   = (brandsRaw   as any[]).map(mapBrand);
+
+        // Workers without payroll sub-records (added in Phase 2)
+        const pompistes = (pompistesRaw as any[]).map(mapPompiste);
+        const brigadeChefs = (chefsRaw as any[]).map(c => {
+          const m = mapBrigadeChef(c);
+          m.pompisteIds = (chefAssignmentsRaw as any[]).filter(a => a.chef_id === c.id).map(a => a.pompiste_id);
+          return m;
+        });
+        const gerants        = (gerantsRaw  as any[]).map(mapGerant);
+        const magasinWorkers = (magasinRaw  as any[]).map(mapMagasinWorker);
+
+        // Clients & suppliers without sub-records (added in Phase 2)
+        const clients   = (clientsRaw   as any[]).map(mapClient);
+        const suppliers = (suppliersRaw as any[]).map(mapSupplier);
+
+        const brigades = (brigadesRaw as any[]).map(b => {
+          const m = mapBrigade(b);
+          m.pompisteIds = (brigadeAssignmentsRaw as any[]).filter(a => a.brigade_id === b.id).map(a => a.pompiste_id);
+          return m;
+        });
+
+        const settings = settingsRaw ? mapSettings(settingsRaw) : emptySettings;
+
+        // Release loading spinner; app can render now
+        clearTimeout(phase1Timeout);
+
+        if (cancelled) return;
+
+        dispatch({
+          type: 'HYDRATE',
+          payload: {
+            tanks, pumps, pumpNozzles, tracks, drivers, products, productBrands: brands,
+            pompistes, brigadeChefs, gerants, magasinWorkers,
+            clients, suppliers, brigades, settings,
+            // Transactional tables start empty; filled by Phase 2 momentarily
+            fuelSales: [], shopSales: [], deliveryNotes: [], purchases: [],
+            expenses: [], inventories: [], dailyReports: [],
+          },
+        });
+
+        console.log('[hydrate] Phase 1 complete — UI unblocked');
+
+        // ── PHASE 2: Large/transactional tables (background) ─────────────
+        // Each fetch is wrapped in safeQ so a single failing table does not
+        // abort the rest.  We also cap row counts on the biggest tables.
+        if (cancelled) return;
+
+        console.log('[hydrate] Phase 2 – transactional tables…');
+
+        const safeQ = async <T,>(name: string, fn: () => Promise<T>): Promise<T> => {
+          try { return await fn(); }
+          catch (err) {
+            console.error(`[hydrate] Phase 2 – ${name} failed:`, err);
+            return [] as unknown as T;
+          }
+        };
+
+        const [
+          fuelSalesRaw, shopSalesRaw, deliveryNotesRaw, purchasesRaw,
+          expensesRaw, inventoriesRaw, dailyReportsRaw,
+          acomptesRaw, absencesRaw, paymentRecordsRaw,
+          dnPaymentsRaw, dnPhotosRaw,
+          purchaseItemsRaw, purchasePaymentsRaw,
+          shopItemsRaw,
+          supplierApptRaw, supplierDebtRaw,
+          clientApptRaw, clientTxRaw,
+          dnItemsRaw,
+          fuelInvoicesRaw, fuelInvoiceBlsRaw, fuelReceiptsRaw, fuelReceiptInvoicesRaw,
+        ] = await Promise.all([
+          // Large tables — capped at 500 most-recent rows
+          safeQ('Fuel Sales', async () => {
+            const { data, error } = await supabase.from('fuel_sales').select('*').order('created_at', { ascending: false }).limit(500);
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Shop Sales', async () => {
+            const { data, error } = await supabase.from('shop_sales').select('*').order('created_at', { ascending: false }).limit(500);
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Delivery Notes', () => db.getDeliveryNotes()),
+          safeQ('Purchases', async () => {
+            const { data, error } = await supabase.from('purchases').select('*').order('created_at', { ascending: false }).limit(500);
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Expenses', () => db.getExpenses()),
+          safeQ('Inventories', () => db.getInventories()),
+          safeQ('Daily Reports', () => db.getDailyReports()),
+          // Payroll sub-records (all workers combined)
+          safeQ('Worker Acomptes', async () => {
+            const { data, error } = await supabase.from('worker_acomptes').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Worker Absences', async () => {
+            const { data, error } = await supabase.from('worker_absences').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Payment Records', async () => {
+            const { data, error } = await supabase.from('worker_payment_records').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          // Sub-records for delivery notes / purchases / shop sales
+          safeQ('DN Payments', async () => {
+            const { data, error } = await supabase.from('delivery_note_payments').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('DN Photos', async () => {
+            const { data, error } = await supabase.from('delivery_note_photos').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Purchase Items', async () => {
+            const { data, error } = await supabase.from('purchase_items').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Purchase Payments', async () => {
+            const { data, error } = await supabase.from('purchase_payments').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Shop Sale Items', async () => {
+            const { data, error } = await supabase.from('shop_sale_items').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          // Client / Supplier sub-records
+          safeQ('Supplier Appointments', async () => {
+            const { data, error } = await supabase.from('supplier_appointments').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Supplier Debt Payments', async () => {
+            const { data, error } = await supabase.from('supplier_debt_payments').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Client Appointments', async () => {
+            const { data, error } = await supabase.from('client_appointments').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Client Transactions', async () => {
+            const { data, error } = await supabase.from('client_transactions').select('*').order('created_at', { ascending: false }).limit(1000);
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Delivery Note Items', async () => {
+            const { data, error } = await supabase.from('delivery_note_items').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Fuel Invoices', async () => {
+            const { data, error } = await supabase.from('fuel_invoices').select('*').order('created_at', { ascending: false }).limit(500);
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Fuel Invoice BLs', async () => {
+            const { data, error } = await supabase.from('fuel_invoice_bls').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Fuel Receipts', async () => {
+            const { data, error } = await supabase.from('fuel_receipts').select('*').order('created_at', { ascending: false }).limit(500);
+            if (error) throw error; return data ?? [];
+          }),
+          safeQ('Fuel Receipt Invoices', async () => {
+            const { data, error } = await supabase.from('fuel_receipt_invoices').select('*');
+            if (error) throw error; return data ?? [];
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        // ── Map Phase 2 data ──────────────────────────────────────────────
+
+        const fuelSales = (fuelSalesRaw as any[]).map(mapFuelSale);
+
+        const shopSales = (shopSalesRaw as any[]).map(s => {
+          const m = mapShopSale(s);
+          m.items = (shopItemsRaw as any[]).filter(i => i.sale_id === s.id).map(i => ({ productId: i.product_id, productName: i.product_name, quantity: +i.quantity, price: +i.price, tva: +(i.tva ?? 0) }));
+          return m;
+        });
+
+        const deliveryNotes = (deliveryNotesRaw as any[]).map(d => {
+          const m = mapDeliveryNote(d);
+          m.photos   = (dnPhotosRaw   as any[]).filter(p => p.delivery_note_id === d.id).map(p => p.photo_url);
+          m.items    = (dnItemsRaw    as any[]).filter(i => i.delivery_note_id === d.id).map(mapDeliveryNoteItem);
+          m.payments = (dnPaymentsRaw as any[]).filter(p => p.delivery_note_id === d.id).map(p => ({ id: p.id, date: p.date, amount: +p.amount, mode: p.mode, receiptNumber: p.receipt_number, receiptPhoto: p.receipt_photo_url }));
+          return m;
+        });
+
+        const fuelInvoices = (fuelInvoicesRaw as any[]).map(r => {
+          const m = mapFuelInvoice(r);
+          m.deliveryNoteIds = (fuelInvoiceBlsRaw as any[]).filter(b => b.invoice_id === r.id).map(b => b.delivery_note_id);
+          return m;
+        });
+        const fuelReceipts = (fuelReceiptsRaw as any[]).map(r => {
+          const m = mapFuelReceipt(r);
+          m.invoiceIds = (fuelReceiptInvoicesRaw as any[]).filter(b => b.receipt_id === r.id).map(b => b.invoice_id);
+          return m;
+        });
+
+        const purchases = (purchasesRaw as any[]).map(p => {
+          const m = mapPurchase(p);
+          m.items    = (purchaseItemsRaw    as any[]).filter(i => i.purchase_id === p.id).map(i => ({ productId: i.product_id, productName: i.product_name, quantity: +i.quantity, buyPrice: +i.buy_price, sellingPrice: +i.selling_price, minStock: i.min_stock ? +i.min_stock : undefined, unit: i.unit, total: +i.total, tankId: i.tank_id, tvaActive: i.tva_active, tvaRate: +(i.tva_rate ?? 0) }));
+          m.payments = (purchasePaymentsRaw as any[]).filter(pay => pay.purchase_id === p.id).map(pay => ({ id: pay.id, date: pay.date, amount: +pay.amount, mode: pay.mode, chequeNumber: pay.cheque_number, notes: pay.notes }));
+          return m;
+        });
+
+        const expenses     = (expensesRaw     as any[]).map(mapExpense);
+        const inventories  = (inventoriesRaw  as any[]).map(mapInventory);
+        const dailyReports = (dailyReportsRaw as any[]).map(mapDailyReport);
+
+        // Merge payroll sub-records into workers (reuses Phase 1 raw arrays)
+        const pompistesWithPayroll = (pompistesRaw as any[]).map(p => {
+          const m = mapPompiste(p);
+          m.acomptes      = (acomptesRaw      as any[]).filter(a => a.worker_id === p.id && a.worker_type === 'pompiste').map(mapAcompte);
+          m.absences      = (absencesRaw      as any[]).filter(a => a.worker_id === p.id && a.worker_type === 'pompiste').map(mapAbsence);
+          m.paymentRecord = (paymentRecordsRaw as any[]).filter(r => r.worker_id === p.id && r.worker_type === 'pompiste').map(mapPaymentRecord);
+          return m;
+        });
+
+        const brigadeChefWithPayroll = (chefsRaw as any[]).map(c => {
+          const m = mapBrigadeChef(c);
+          m.pompisteIds   = (chefAssignmentsRaw  as any[]).filter(a => a.chef_id === c.id).map(a => a.pompiste_id);
+          m.acomptes      = (acomptesRaw         as any[]).filter(a => a.worker_id === c.id && a.worker_type === 'chef_brigade').map(mapAcompte);
+          m.absences      = (absencesRaw         as any[]).filter(a => a.worker_id === c.id && a.worker_type === 'chef_brigade').map(mapAbsence);
+          m.paymentRecord = (paymentRecordsRaw   as any[]).filter(r => r.worker_id === c.id && r.worker_type === 'chef_brigade').map(mapPaymentRecord);
+          return m;
+        });
+
+        const gerantsWithPayroll = (gerantsRaw as any[]).map(g => {
+          const m = mapGerant(g);
+          m.acomptes      = (acomptesRaw      as any[]).filter(a => a.worker_id === g.id && a.worker_type === 'gerant').map(mapAcompte);
+          m.absences      = (absencesRaw      as any[]).filter(a => a.worker_id === g.id && a.worker_type === 'gerant').map(mapAbsence);
+          m.paymentRecord = (paymentRecordsRaw as any[]).filter(r => r.worker_id === g.id && r.worker_type === 'gerant').map(mapPaymentRecord);
+          return m;
+        });
+
+        const magasinWithPayroll = (magasinRaw as any[]).map(m2 => {
+          const m = mapMagasinWorker(m2);
+          m.acomptes      = (acomptesRaw      as any[]).filter(a => a.worker_id === m2.id && a.worker_type === 'magasin').map(mapAcompte);
+          m.absences      = (absencesRaw      as any[]).filter(a => a.worker_id === m2.id && a.worker_type === 'magasin').map(mapAbsence);
+          m.paymentRecord = (paymentRecordsRaw as any[]).filter(r => r.worker_id === m2.id && r.worker_type === 'magasin').map(mapPaymentRecord);
+          return m;
+        });
+
+        // Merge supplier sub-records
+        const suppliersWithSub = (suppliersRaw as any[]).map(s => {
+          const m = mapSupplier(s);
+          m.appointments = (supplierApptRaw as any[]).filter(a => a.supplier_id === s.id).map(a => ({ id: a.id, purchaseId: a.purchase_id, date: a.date, amount: +a.amount, notes: a.notes, isPaid: a.is_paid }));
+          m.debtPayments = (supplierDebtRaw as any[]).filter(p => p.supplier_id === s.id).map(p => ({ id: p.id, purchaseId: p.purchase_id, deliveryNoteId: p.delivery_note_id, date: p.date, amount: +p.amount, totalDue: +p.total_due, rest: +p.rest, paymentMode: p.payment_mode, chequeNumber: p.cheque_number, notes: p.notes }));
+          return m;
+        });
+
+        // Merge client sub-records
+        const clientsWithSub = (clientsRaw as any[]).map(c => {
+          const m = mapClient(c);
+          m.appointments      = (clientApptRaw as any[]).filter(a => a.client_id === c.id).map(a => ({ id: a.id, saleId: a.sale_id, date: a.date, amount: +a.amount, notes: a.notes, isPaid: a.is_paid }));
+          m.transactionHistory = (clientTxRaw as any[]).filter(t => t.client_id === c.id).map(t => ({ id: t.id, date: t.date, type: t.type, amount: +t.amount, mode: t.mode, receiptNumber: t.receipt_number, receiptPhoto: t.receipt_photo_url, notes: t.notes }));
+          return m;
+        });
+
+        if (cancelled) return;
+
+        dispatch({
+          type: 'HYDRATE',
+          payload: {
+            fuelSales, shopSales, deliveryNotes, purchases,
+            fuelInvoices, fuelReceipts,
+            expenses, inventories, dailyReports,
+            pompistes:       pompistesWithPayroll,
+            brigadeChefs:    brigadeChefWithPayroll,
+            gerants:         gerantsWithPayroll,
+            magasinWorkers:  magasinWithPayroll,
+            suppliers:       suppliersWithSub,
+            clients:         clientsWithSub,
+          },
+        });
+
+        console.log('[hydrate] Phase 2 complete — all data loaded');
+
+      } catch (err) {
+        clearTimeout(phase1Timeout);
+        if (cancelled) return;
+        console.error('[hydrate] Critical error in Phase 1:', err);
+        dispatch({ type: 'SET_LOADING', payload: false });
+        dispatch({
+          type: 'ADD_TOAST',
+          payload: {
+            type: 'error',
+            message: `Erreur de chargement: ${err instanceof Error ? err.message : 'Erreur inconnue'}. Rechargez la page.`,
+          },
+        });
+      }
+    }
+
+    isHydrating.current = true;
+    hydrate().finally(() => { isHydrating.current = false; });
+    return () => {
+      cancelled = true;
+      clearTimeout(phase1Timeout);
+    };
+  }, [dispatch]);
+
+  // ── Realtime subscriptions ────────────────────────────────────────────────
+  // Wire up the existing subscribeTable() helper so DB changes DZDe by other
+  // sessions (or directly in the Supabase dashboard) reflect in the app live.
+  useEffect(() => {
+    // Map each table to a lightweight re-fetch that returns the new state slice
+    type SliceFn = () => Promise<Partial<AppState>>;
+    const tableMap: Record<string, SliceFn> = {
+      tanks:   async () => ({ tanks:           ((await db.getTanks())        as any[]).map(mapTank) }),
+      pumps:   async () => ({ pumps:           ((await db.getPumps())        as any[]).map(mapPump) }),
+      pump_nozzles: async () => ({ pumpNozzles: ((await db.getNozzles())    as any[]).map(mapNozzle) }),
+      tracks:  async () => ({ tracks:          ((await db.getTracks())       as any[]).map(mapTrack) }),
+      products: async () => ({ products:       ((await db.getProducts())     as any[]).map(mapProduct) }),
+      product_brands: async () => ({ productBrands: ((await db.getBrands()) as any[]).map(mapBrand) }),
+      pompistes: async () => ({ pompistes:     ((await db.getPompistes())    as any[]).map(mapPompiste) }),
+      brigade_chefs: async () => ({ brigadeChefs: ((await db.getBrigadeChefs()) as any[]).map(mapBrigadeChef) }),
+      gerants: async () => ({ gerants:         ((await db.getGerants())      as any[]).map(mapGerant) }),
+      magasin_workers: async () => ({ magasinWorkers: ((await db.getMagasinWorkers()) as any[]).map(mapMagasinWorker) }),
+      suppliers: async () => ({ suppliers:     ((await db.getSuppliers())    as any[]).map(mapSupplier) }),
+      clients:  async () => ({ clients:        ((await db.getClients())      as any[]).map(mapClient) }),
+      expenses: async () => ({ expenses:       ((await db.getExpenses())     as any[]).map(mapExpense) }),
+      brigades: async () => {
+        const raw       = await db.getBrigades();
+        const assignRaw = await supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []);
+        const accountingsRaw = await db.getBrigadeAccountings().catch(() => []);
+        const brigadeAccountings = ((accountingsRaw as any[]) || []).map(mapBrigadeAccounting);
+        return { brigades: (raw as any[]).map(b => { const m = mapBrigade(b); m.pompisteIds = (assignRaw as any[]).filter(a => a.brigade_id === b.id).map(a => a.pompiste_id); return m; }), brigadeAccountings };
+      },
+      fuel_sales: async () => {
+        const { data } = await supabase.from('fuel_sales').select('*').order('created_at', { ascending: false }).limit(500);
+        return { fuelSales: ((data ?? []) as any[]).map(mapFuelSale) };
+      },
+      shop_sales: async () => {
+        const { data } = await supabase.from('shop_sales').select('*').order('created_at', { ascending: false }).limit(500);
+        return { shopSales: ((data ?? []) as any[]).map(mapShopSale) };
+      },
+      delivery_notes: async () => ({ deliveryNotes: ((await db.getDeliveryNotes()) as any[]).map(mapDeliveryNote) }),
+      purchases: async () => {
+        const { data } = await supabase.from('purchases').select('*').order('created_at', { ascending: false }).limit(500);
+        return { purchases: ((data ?? []) as any[]).map(mapPurchase) };
+      },
+    };
+
+    const unsubs: (() => void)[] = [];
+
+    for (const [table, sliceFn] of Object.entries(tableMap)) {
+      unsubs.push(
+        subscribeTable(table, async () => {
+          try {
+            const payload = await sliceFn();
+            dispatch({ type: 'HYDRATE', payload });
+          } catch (err) {
+            console.error(`[realtime] Refetch failed for ${table}:`, err);
+          }
+        })
+      );
+    }
+
+    return () => unsubs.forEach(u => u());
+  }, [dispatch]);
+
+  // ── Re-hydrate when the JWT is refreshed ──────────────────────────────────
+  // If the app was opened with an expired token, some tables may have returned
+  // empty arrays during the initial load.  When Supabase auto-refreshes the JWT
+  // (TOKEN_REFRESHED event), re-fetch Phase 1 critical data so those tables fill
+  // in.  Individual subsequent requests are already protected by withAuthRetry.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event) => {
+        if (event !== 'TOKEN_REFRESHED') return;
+        if (isHydrating.current) {
+          console.log('[AppContext] TOKEN_REFRESHED — hydration in progress, skipping re-hydrate');
+          return;
+        }
+        console.log('[AppContext] TOKEN_REFRESHED — re-hydrating critical data…');
+        isHydrating.current = true;
+        try {
+          const [
+            tanksRaw, pumpsRaw, tracksRaw, driversRaw,
+            productsRaw, brandsRaw,
+            pompistesRaw, chefsRaw, gerantsRaw, magasinRaw,
+            clientsRaw, suppliersRaw, brigadesRaw, settingsRaw,
+            brigadeAssignmentsRaw, chefAssignmentsRaw,
+          ] = await Promise.all([
+            db.getTanks(), db.getPumps(), db.getTracks(), db.getDrivers(),
+            db.getProducts(), db.getBrands(),
+            db.getPompistes(), db.getBrigadeChefs(),
+            db.getGerants(), db.getMagasinWorkers(),
+            db.getClients(), db.getSuppliers(),
+            db.getBrigades(), db.getSettings(),
+            supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []),
+            supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []),
+          ]);
+
+          const brigadeChefs = (chefsRaw as any[]).map(c => {
+            const m = mapBrigadeChef(c);
+            m.pompisteIds = (chefAssignmentsRaw as any[]).filter((a: any) => a.chef_id === c.id).map((a: any) => a.pompiste_id);
+            return m;
+          });
+          const brigades = (brigadesRaw as any[]).map(b => {
+            const m = mapBrigade(b);
+            m.pompisteIds = (brigadeAssignmentsRaw as any[]).filter((a: any) => a.brigade_id === b.id).map((a: any) => a.pompiste_id);
+            return m;
+          });
+
+          dispatch({
+            type: 'HYDRATE',
+            payload: {
+              tanks:         (tanksRaw  as any[]).map(mapTank),
+              pumps:         (pumpsRaw  as any[]).map(mapPump),
+              tracks:        (tracksRaw as any[]).map(mapTrack),
+              drivers:       (driversRaw as any[]).map(mapDriver),
+              products:      (productsRaw as any[]).map(mapProduct),
+              productBrands: (brandsRaw  as any[]).map(mapBrand),
+              pompistes:     (pompistesRaw as any[]).map(mapPompiste),
+              brigadeChefs,
+              gerants:       (gerantsRaw as any[]).map(mapGerant),
+              magasinWorkers:(magasinRaw as any[]).map(mapMagasinWorker),
+              clients:       (clientsRaw  as any[]).map(mapClient),
+              suppliers:     (suppliersRaw as any[]).map(mapSupplier),
+              brigades,
+              settings:      settingsRaw ? mapSettings(settingsRaw as any) : emptySettings,
+            },
+          });
+          console.log('[AppContext] TOKEN_REFRESHED re-hydration complete');
+        } catch (err) {
+          console.error('[AppContext] Re-hydration after TOKEN_REFRESHED failed:', err);
+        } finally {
+          isHydrating.current = false;
+        }
+      }
+    );
+    return () => subscription.unsubscribe();
+  }, [dispatch]);
+
+  // ── Synced dispatch: optimistic update + Supabase write ───────────────────
+  //
+  // On write failure: show an error toast AND re-fetch the affected entity
+  // from the DB to revert the optimistic change, so the UI reflects reality.
+  const syncedDispatch = useCallback((action: AppAction): void => {
+    dispatch(action); // optimistic update first — UI stays snappy
+
+    syncToSupabase(action).catch(async (err: unknown) => {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[syncedDispatch] DB write failed:', (action as any).type, errMsg);
+
+      // Notify the user with an actionable error toast
+      dispatch({
+        type: 'ADD_TOAST',
+        payload: {
+          type: 'error',
+          message: `Erreur de sauvegarde (${(action as any).type}): ${errMsg}`,
+        },
+      });
+
+      // Revert the optimistic change by re-fetching from the database
+      await refetchEntityAfterAction(action, dispatch);
+    });
+  }, [dispatch]);
+
+  return (
+    <StateContext.Provider value={state}>
+      <DispatchContext.Provider value={syncedDispatch}>
+        {children}
+      </DispatchContext.Provider>
+    </StateContext.Provider>
+  );
+};
+
+// ─── Context hooks ─────────────────────────────────────────────────────────────
+
+export const useAppState = () => {
+  const ctx = useContext(StateContext);
+  if (!ctx) throw new Error('useAppState must be used within AppProvider');
+  return ctx;
+};
+
+export const useAppDispatch = () => {
+  const ctx = useContext(DispatchContext);
+  if (!ctx) throw new Error('useAppDispatch must be used within AppProvider');
+  return ctx;
+};
+
+export const useRtl = () => {
+  const { isRtl } = useAppState();
+  const dispatch  = useAppDispatch();
+  return { isRtl, toggleRtl: () => dispatch({ type: 'TOGGLE_RTL' }) };
+};
+
+// ─── useSupabaseDispatch: alias for useAppDispatch (already synced) ───────────
+/**
+ * @deprecated Use useAppDispatch() — it already syncs to Supabase.
+ * Kept for backward compatibility only.
+ */
+export function useSupabaseDispatch() {
+  const dispatch = useAppDispatch();
+
+  return useCallback(async (action: AppAction) => {
+    // Always update local state first (optimistic)
+    dispatch(action);
+
+    // Persist to Supabase in background
+    try {
+      switch (action.type) {
+        // ── Tanks ──────────────────────────────────────────────────────────
+        case 'ADD_TANK':
+          await db.addTank({ id: action.payload.id, name: action.payload.name, type: action.payload.type, capacity: action.payload.capacity, current: action.payload.current, degrees: action.payload.degrees, alert_threshold: action.payload.alertThreshold, notes: action.payload.notes });
+          break;
+        case 'UPDATE_TANK':
+          await db.updateTank(action.payload.id, { name: action.payload.name, type: action.payload.type, capacity: action.payload.capacity, current: action.payload.current, degrees: action.payload.degrees, alert_threshold: action.payload.alertThreshold, notes: action.payload.notes });
+          break;
+        case 'DELETE_TANK':
+          await db.deleteTank(action.payload);
+          break;
+
+        // ── Tracks ─────────────────────────────────────────────────────────
+        case 'ADD_TRACK':
+          await db.addTrack({ id: action.payload.id, name: action.payload.name });
+          break;
+        case 'UPDATE_TRACK':
+          await db.updateTrack(action.payload.id, { name: action.payload.name, updated_at: new Date().toISOString() });
+          break;
+        case 'DELETE_TRACK':
+          await db.deleteTrack(action.payload);
+          break;
+
+        // ── Pumps ──────────────────────────────────────────────────────────
+        case 'ADD_PUMP':
+          await db.addPump({ id: action.payload.id, number: action.payload.number, name: action.payload.name, tank_id: nz(action.payload.tankId), track_id: nz(action.payload.trackId), type: action.payload.type, last_index: action.payload.lastIndex, status: action.payload.status });
+          break;
+        case 'UPDATE_PUMP':
+          await db.updatePump(action.payload.id, { number: action.payload.number, name: action.payload.name, tank_id: nz(action.payload.tankId), track_id: nz(action.payload.trackId), type: action.payload.type, last_index: action.payload.lastIndex, status: action.payload.status, current_brigade_start_index: action.payload.currentBrigadeStartIndex });
+          break;
+        case 'DELETE_PUMP':
+          await db.deletePump(action.payload);
+          break;
+
+        // ── Suppliers ──────────────────────────────────────────────────────
+        case 'ADD_SUPPLIER':
+          await db.addSupplier({ id: action.payload.id, ref: action.payload.ref, name: action.payload.name, contact: action.payload.contact, phone: action.payload.phone, email: action.payload.email, address: action.payload.address, balance: action.payload.balance, total_purchases: action.payload.totalPurchases, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, type: action.payload.type });
+          break;
+        case 'UPDATE_SUPPLIER':
+          await db.updateSupplier(action.payload.id, { ref: action.payload.ref, name: action.payload.name, contact: action.payload.contact, phone: action.payload.phone, email: action.payload.email, address: action.payload.address, balance: action.payload.balance, total_purchases: action.payload.totalPurchases, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, type: action.payload.type });
+          break;
+        case 'DELETE_SUPPLIER':
+          await db.deleteSupplier(action.payload);
+          break;
+
+        // ── Clients ────────────────────────────────────────────────────────
+        case 'ADD_CLIENT':
+          await db.addClient({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, cin: action.payload.cin, email: action.payload.email, address: action.payload.address, contact_person: action.payload.contactPerson, balance: action.payload.balance, debt: action.payload.debt, credit_limit: action.payload.creditLimit, payment_delay: action.payload.paymentDelay, type: action.payload.type, payment_mode: action.payload.paymentMode, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, advance_balance: action.payload.advanceBalance ?? 0 });
+          break;
+        case 'UPDATE_CLIENT':
+          await db.updateClient(action.payload.id, { name: action.payload.name, phone: action.payload.phone, cin: action.payload.cin, email: action.payload.email, address: action.payload.address, contact_person: action.payload.contactPerson, balance: action.payload.balance, debt: action.payload.debt, credit_limit: action.payload.creditLimit, payment_delay: action.payload.paymentDelay, type: action.payload.type, payment_mode: action.payload.paymentMode, nif: action.payload.nif, nis: action.payload.nis, article: action.payload.article, rc: action.payload.rc, advance_balance: action.payload.advanceBalance ?? 0 });
+          break;
+        case 'DELETE_CLIENT':
+          await db.deleteClient(action.payload);
+          break;
+
+        // ── Products ───────────────────────────────────────────────────────
+        case 'ADD_PRODUCT':
+          await db.addProduct({ id: action.payload.id, ref: action.payload.ref, name: action.payload.name, category: action.payload.category, buy_price: action.payload.buyPrice, selling_price: action.payload.sellingPrice, stock: action.payload.stock, min_stock: action.payload.minStock, barcode: action.payload.barcode, image_url: action.payload.imageUrl || action.payload.image, unit: action.payload.unit, brand: action.payload.brand, brand_id: nz(action.payload.brandId), tva_rate: action.payload.tvaRate ?? 0 });
+          break;
+        case 'UPDATE_PRODUCT':
+          await db.updateProduct(action.payload.id, { ref: action.payload.ref, name: action.payload.name, category: action.payload.category, buy_price: action.payload.buyPrice, selling_price: action.payload.sellingPrice, stock: action.payload.stock, min_stock: action.payload.minStock, barcode: action.payload.barcode, image_url: action.payload.imageUrl || action.payload.image, unit: action.payload.unit, brand: action.payload.brand, brand_id: nz(action.payload.brandId), tva_rate: action.payload.tvaRate ?? 0 });
+          break;
+        case 'DELETE_PRODUCT':
+          await db.deleteProduct(action.payload);
+          break;
+
+        // ── Product Brands ─────────────────────────────────────────────────
+        case 'ADD_BRAND':
+          await db.addBrand({ id: action.payload.id, name: action.payload.name });
+          break;
+        case 'UPDATE_BRAND':
+          await db.updateBrand(action.payload.id, { name: action.payload.name });
+          break;
+        case 'DELETE_BRAND':
+          await db.deleteBrand(action.payload);
+          break;
+
+        // ── Pompistes ──────────────────────────────────────────────────────
+        case 'ADD_POMPISTE':
+          await db.addPompiste({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, track_id: nz(action.payload.trackId), chef_id: nz(action.payload.chefId), base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          break;
+        case 'UPDATE_POMPISTE':
+          await db.updatePompiste(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, track_id: nz(action.payload.trackId), chef_id: nz(action.payload.chefId), base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          break;
+        case 'DELETE_POMPISTE':
+          await db.deletePompiste(action.payload);
+          break;
+
+        // ── Brigade Chefs ──────────────────────────────────────────────────
+        case 'ADD_BRIGADE_CHEF':
+          await db.addBrigadeChef({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          if (action.payload.pompisteIds?.length) await supabase.from('chef_pompiste_assignments').insert(action.payload.pompisteIds.map(pid => ({ chef_id: action.payload.id, pompiste_id: pid })));
+          break;
+        case 'UPDATE_BRIGADE_CHEF':
+          await db.updateBrigadeChef(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          if (action.payload.pompisteIds !== undefined) { await supabase.from('chef_pompiste_assignments').delete().eq('chef_id', action.payload.id); if (action.payload.pompisteIds.length) await supabase.from('chef_pompiste_assignments').insert(action.payload.pompisteIds.map(pid => ({ chef_id: action.payload.id, pompiste_id: pid }))); }
+          break;
+        case 'DELETE_BRIGADE_CHEF':
+          await db.deleteBrigadeChef(action.payload);
+          break;
+
+        // ── Gérants ────────────────────────────────────────────────────────
+        case 'ADD_GERANT':
+          await db.addGerant({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          break;
+        case 'UPDATE_GERANT':
+          await db.updateGerant(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          break;
+        case 'DELETE_GERANT':
+          await db.deleteGerant(action.payload);
+          break;
+
+        // ── Magasin Workers ────────────────────────────────────────────────
+        case 'ADD_MAGASIN_WORKER':
+          await db.addMagasinWorker({ id: action.payload.id, name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          break;
+        case 'UPDATE_MAGASIN_WORKER':
+          await db.updateMagasinWorker(action.payload.id, { name: action.payload.name, phone: action.payload.phone, email: action.payload.email, cin: action.payload.cin, address: action.payload.address, photo_url: action.payload.photoUrl, status: action.payload.status, base_salary: action.payload.baseSalary, has_access: action.payload.hasAccess, username: action.payload.username, permissions: action.payload.permissions || {}, hire_date: nz(action.payload.hireDate) });
+          break;
+        case 'DELETE_MAGASIN_WORKER':
+          await db.deleteMagasinWorker(action.payload);
+          break;
+
+        // ── Brigades ───────────────────────────────────────────────────────
+        case 'ADD_BRIGADE': {
+          const b = action.payload;
+          await db.addBrigade({ id: b.id, date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {} });
+          // Insert pompiste assignments
+          if (b.pompisteIds?.length) {
+            await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid })));
+          }
+          break;
+        }
+        case 'UPDATE_BRIGADE': {
+          const b = action.payload;
+          await db.updateBrigade(b.id, { date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, printed_at: b.printedAt, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {} });
+          // Sync pompiste assignments
+          if (b.pompisteIds) {
+            await supabase.from('brigade_pompiste_assignments').delete().eq('brigade_id', b.id);
+            if (b.pompisteIds.length) {
+              await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid })));
+            }
+          }
+          break;
+        }
+        case 'DELETE_BRIGADE':
+          await db.deleteBrigade(action.payload);
+          break;
+        case 'UPDATE_BRIGADE_STATUS':
+          await db.updateBrigade(action.payload.brigadeId, { is_active: action.payload.isActive, status: action.payload.status });
+          break;
+
+        // ── Fuel Sales ─────────────────────────────────────────────────────
+        case 'ADD_FUEL_SALE':
+          await db.addFuelSale({ id: action.payload.id, date: action.payload.date, pump_id: action.payload.pumpId, liters: action.payload.liters, price_per_liter: action.payload.pricePerLiter, total: action.payload.total, payment_mode: action.payload.paymentMode, client_id: nz(action.payload.clientId), bon_number: action.payload.bonNumber, bon_photo_url: action.payload.bonPhotoUrl || action.payload.bonPhoto, pompiste_id: nz(action.payload.pompisteId), brigade_id: nz(action.payload.brigadeId) });
+          break;
+        case 'UPDATE_FUEL_SALE':
+          await db.updateFuelSale(action.payload.id, { pump_id: action.payload.pumpId, liters: action.payload.liters, price_per_liter: action.payload.pricePerLiter, total: action.payload.total, payment_mode: action.payload.paymentMode, client_id: nz(action.payload.clientId), bon_number: action.payload.bonNumber, bon_photo_url: action.payload.bonPhotoUrl });
+          break;
+        case 'DELETE_FUEL_SALE':
+          await db.deleteFuelSale(action.payload);
+          break;
+
+        // ── Shop Sales ─────────────────────────────────────────────────────
+        case 'ADD_SHOP_SALE': {
+          const s = action.payload;
+          await db.addShopSale({ id: s.id, date: s.date, client_id: nz(s.clientId), seller_id: nz(s.sellerId), subtotal: s.subtotal, tva_amount: s.tvaAmount ?? 0, total: s.total, payment_mode: s.paymentMode, cheque_number: s.chequeNumber, bon_number: s.bonNumber, bon_photo_url: s.bonPhotoUrl, amount_paid: s.amountPaid ?? 0, rest: s.rest ?? 0, status: s.status, notes: s.notes });
+          if (s.items?.length) {
+            await db.addShopSaleItems(s.items.map(i => ({ sale_id: s.id, product_id: i.productId, product_name: i.productName, quantity: i.quantity, price: i.price, tva: i.tva ?? 0 })));
+          }
+          break;
+        }
+        case 'UPDATE_SHOP_SALE':
+          await db.updateShopSale(action.payload.id, { subtotal: action.payload.subtotal, tva_amount: action.payload.tvaAmount, total: action.payload.total, payment_mode: action.payload.paymentMode, amount_paid: action.payload.amountPaid, rest: action.payload.rest, status: action.payload.status, notes: action.payload.notes, printed_at: action.payload.printedAt });
+          break;
+        case 'DELETE_SHOP_SALE':
+          await db.deleteShopSale(action.payload);
+          break;
+
+        // ── Delivery Notes ─────────────────────────────────────────────────
+        case 'ADD_DELIVERY_NOTE': {
+          const d = action.payload;
+          await db.addDeliveryNote({ id: d.id, date: d.date, supplier_id: nz(d.supplierId), tank_id: nz(d.tankId), liters: d.liters, price_per_liter: d.pricePerLiter, status: d.status, total: d.total, expiry_date: nz(d.expiryDate) });
+          if (d.photos?.length) {
+            for (const url of d.photos) {
+              await db.addDeliveryNotePhoto({ delivery_note_id: d.id, photo_url: url });
+            }
+          }
+          if (d.payments?.length) {
+            for (const p of d.payments) {
+              await db.addDeliveryNotePayment({ id: p.id, delivery_note_id: d.id, date: p.date, amount: p.amount, mode: p.mode, receipt_number: p.receiptNumber, receipt_photo_url: p.receiptPhoto });
+            }
+          }
+          break;
+        }
+        case 'UPDATE_DELIVERY_NOTE':
+          await db.updateDeliveryNote(action.payload.id, { date: action.payload.date, supplier_id: nz(action.payload.supplierId), tank_id: nz(action.payload.tankId), liters: action.payload.liters, price_per_liter: action.payload.pricePerLiter, status: action.payload.status, total: action.payload.total, expiry_date: nz(action.payload.expiryDate) });
+          break;
+        case 'DELETE_DELIVERY_NOTE':
+          await db.deleteDeliveryNote(action.payload);
+          break;
+
+        // ── Purchases ──────────────────────────────────────────────────────
+        case 'ADD_PURCHASE': {
+          const p = action.payload;
+          await db.addPurchase({ id: p.id, date: p.date, supplier_id: nz(p.supplierId), invoice_number: p.invoiceNumber, due_date: nz(p.dueDate), driver_id: nz(p.driverId), total: p.total, amount_paid: p.amountPaid, rest: p.rest, status: p.status, payment_mode: p.paymentMode, cheque_number: p.chequeNumber, linked_delivery_note_id: nz(p.linkedDeliveryNoteId), notes: p.notes, type: p.type, tva_rate: p.tvaRate ?? 0, tva_active: p.tvaActive ?? false, tank_id: nz(p.tankId), receipt_photo_url: p.receiptPhoto });
+          if (p.items?.length) {
+            await db.addPurchaseItems(p.items.map(i => ({ purchase_id: p.id, product_id: nz(i.productId), product_name: i.productName, quantity: i.quantity, buy_price: i.buyPrice, selling_price: i.sellingPrice, min_stock: i.minStock, unit: i.unit, total: i.total, tank_id: nz(i.tankId), tva_active: i.tvaActive ?? false, tva_rate: i.tvaRate ?? 0 })));
+          }
+          if (p.payments?.length) {
+            for (const pay of p.payments) {
+              await db.addPurchasePayment({ id: pay.id, purchase_id: p.id, date: pay.date, amount: pay.amount, mode: pay.mode, cheque_number: pay.chequeNumber, notes: pay.notes });
+            }
+          }
+          break;
+        }
+        case 'UPDATE_PURCHASE':
+          await db.updatePurchase(action.payload.id, { total: action.payload.total, amount_paid: action.payload.amountPaid, rest: action.payload.rest, status: action.payload.status, payment_mode: action.payload.paymentMode, cheque_number: action.payload.chequeNumber, notes: action.payload.notes, receipt_photo_url: action.payload.receiptPhoto });
+          break;
+        case 'DELETE_PURCHASE':
+          await db.deletePurchase(action.payload);
+          break;
+
+        // ── Expenses ───────────────────────────────────────────────────────
+        case 'ADD_EXPENSE':
+          await db.addExpense({ id: action.payload.id, date: action.payload.date, category: action.payload.category, amount: action.payload.amount, description: action.payload.description, payment_mode: action.payload.paymentMode, cheque_number: action.payload.chequeNumber, paid_by: action.payload.paidBy, recipient: action.payload.recipient, status: action.payload.status, receipt_url: action.payload.receiptUrl || action.payload.receipt, created_by: nz(action.payload.createdBy) });
+          break;
+        case 'UPDATE_EXPENSE':
+          await db.updateExpense(action.payload.id, { date: action.payload.date, category: action.payload.category, amount: action.payload.amount, description: action.payload.description, payment_mode: action.payload.paymentMode, cheque_number: action.payload.chequeNumber, paid_by: action.payload.paidBy, recipient: action.payload.recipient, status: action.payload.status, receipt_url: action.payload.receiptUrl });
+          break;
+        case 'DELETE_EXPENSE':
+          await db.deleteExpense(action.payload);
+          break;
+
+        // ── Inventories ────────────────────────────────────────────────────
+        case 'ADD_INVENTORY':
+        case 'SAVE_INVENTORY':
+          await db.addInventory({ id: action.payload.id, name: action.payload.name, description: action.payload.description, date: action.payload.date, user_name: action.payload.user, type: action.payload.type, status: action.payload.status, fuel_gaps: action.payload.fuelGaps, pump_index_gaps: action.payload.pumpIndexGaps || [], product_gaps: action.payload.productGaps, adjustment_reason: action.payload.adjustmentReason, adjusted_at: nz(action.payload.adjustedAt) });
+          break;
+        case 'UPDATE_INVENTORY':
+          await db.updateInventory(action.payload.id, { name: action.payload.name, status: action.payload.status, fuel_gaps: action.payload.fuelGaps, pump_index_gaps: action.payload.pumpIndexGaps || [], product_gaps: action.payload.productGaps, adjustment_reason: action.payload.adjustmentReason, adjusted_at: nz(action.payload.adjustedAt) });
+          break;
+        case 'DELETE_INVENTORY':
+          await db.deleteInventory(action.payload);
+          break;
+
+        // ── Daily Report ───────────────────────────────────────────────────
+        case 'ADD_DAILY_REPORT':
+          await db.addDailyReport({ id: action.payload.id, date: action.payload.date, fuel_revenue: action.payload.fuelRevenue, shop_revenue: action.payload.shopRevenue, total_expenses: action.payload.totalExpenses, cash_to_deposit: action.payload.cashToDeposit, tank_variations: action.payload.tankVariations, brigade_ids: action.payload.brigadeIds });
+          break;
+
+        // ── Settings ───────────────────────────────────────────────────────
+        case 'SET_SETTINGS':
+          await db.saveSettings({ name: action.payload.name, logo_url: action.payload.logoUrl || action.payload.logo, address: action.payload.address, phone: action.payload.phone, email: action.payload.email, fiscal_id: action.payload.fiscalId, rc: action.payload.rc, fuel_prices: action.payload.fuelPrices, conversion_tables: action.payload.conversionTables, product_categories: action.payload.productCategories, expense_categories: action.payload.expenseCategories, product_units: action.payload.productUnits || DEFAULT_PRODUCT_UNITS, decalage_positif_actif: action.payload.decalagePositifActif, decalage_negatif_actif: action.payload.decalageNegatifActif });
+          break;
+
+        // ── Payroll sub-records ────────────────────────────────────────────
+        case 'UPDATE_WORKER_ACOMPTE':
+          await db.addWorkerAcompte({ id: action.payload.acompte.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, date: action.payload.acompte.date, amount: action.payload.acompte.amount, description: action.payload.acompte.description, is_paid: action.payload.acompte.isPaid, month_paid: action.payload.acompte.monthPaid });
+          break;
+        case 'UPDATE_WORKER_ABSENCE':
+          await db.addWorkerAbsence({ id: action.payload.absence.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, date: action.payload.absence.date, cost: action.payload.absence.cost, description: action.payload.absence.description, is_paid: action.payload.absence.isPaid, month_paid: action.payload.absence.monthPaid });
+          break;
+        case 'ADD_WORKER_PAYMENT':
+          await db.addWorkerPaymentRecord({ id: action.payload.payment.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, month: action.payload.payment.month, base_salary: action.payload.payment.baseSalary, total_acomptes: action.payload.payment.totalAcomptes, total_absences: action.payload.payment.totalAbsences, bonus_decalage: action.payload.payment.bonusDecalage ?? 0, retenue_decalage: action.payload.payment.retenueDecalage ?? 0, net_salary: action.payload.payment.netSalary, payment_date: action.payload.payment.paymentDate, payment_mode: action.payload.payment.paymentMode, cheque_number: action.payload.payment.chequeNumber, notes: action.payload.payment.notes, is_paid: action.payload.payment.isPaid });
+          break;
+        case 'MARK_PAYMENT_PAID':
+          await db.markPaymentPaid(action.payload.paymentId);
+          break;
+
+        // ── Supplier sub-records ───────────────────────────────────────────
+        case 'ADD_SUPPLIER_APPOINTMENT':
+          await db.addSupplierAppointment({ id: action.payload.appointment.id, supplier_id: action.payload.supplierId, purchase_id: nz(action.payload.appointment.purchaseId), date: action.payload.appointment.date, amount: action.payload.appointment.amount, notes: action.payload.appointment.notes, is_paid: action.payload.appointment.isPaid });
+          break;
+        case 'ADD_SUPPLIER_PAYMENT':
+          await db.addSupplierDebtPayment({ id: action.payload.payment.id, supplier_id: action.payload.supplierId, purchase_id: nz(action.payload.payment.purchaseId), delivery_note_id: nz(action.payload.payment.deliveryNoteId), date: action.payload.payment.date, amount: action.payload.payment.amount, total_due: action.payload.payment.totalDue, rest: action.payload.payment.rest, payment_mode: action.payload.payment.paymentMode, cheque_number: action.payload.payment.chequeNumber, notes: action.payload.payment.notes });
+          break;
+
+        // ── Client sub-records ─────────────────────────────────────────────
+        case 'ADD_CLIENT_APPOINTMENT':
+          await db.addClientAppointment({ id: action.payload.appointment.id, client_id: action.payload.clientId, sale_id: nz(action.payload.appointment.saleId), date: action.payload.appointment.date, amount: action.payload.appointment.amount, notes: action.payload.appointment.notes, is_paid: action.payload.appointment.isPaid });
+          break;
+        case 'ADD_CLIENT_PAYMENT':
+          await db.addClientTransaction({ id: action.payload.payment.id, client_id: action.payload.clientId, date: action.payload.payment.date, type: action.payload.payment.type, amount: action.payload.payment.amount, mode: action.payload.payment.mode, receipt_number: action.payload.payment.receiptNumber, receipt_photo_url: action.payload.payment.receiptPhoto, notes: action.payload.payment.notes });
+          break;
+
+        // ── Product stock ──────────────────────────────────────────────────
+        case 'UPDATE_PRODUCT_STOCK':
+          // Stock is embedded in the products table; fetch current then update
+          // maybeSingle() avoids 406 if product was concurrently deleted
+          {
+            const { data } = await supabase.from('products').select('stock, buy_price, selling_price').eq('id', action.payload.productId).maybeSingle();
+            if (data) {
+              await supabase.from('products').update({
+                stock: (+data.stock) + action.payload.quantity,
+                buy_price: action.payload.buyPrice ?? data.buy_price,
+                selling_price: action.payload.sellPrice ?? data.selling_price,
+              }).eq('id', action.payload.productId);
+            }
+          }
+          break;
+
+        // ── Drivers ────────────────────────────────────────────────────────
+        case 'ADD_DRIVER':
+          await db.addDriver({ id: action.payload.id, name: action.payload.name });
+          break;
+        case 'DELETE_DRIVER':
+          await db.deleteDriver(action.payload);
+          break;
+
+        // ── Log Activity ───────────────────────────────────────────────────
+        case 'LOG_ACTIVITY':
+          await db.addActivityLog({ user_id: action.payload.userId, action: action.payload.action, details: action.payload.details });
+          break;
+
+        default:
+          break;
+      }
+    } catch (err) {
+      console.error('Supabase sync error for action', action.type, err);
+    }
+  }, [dispatch]);
+}

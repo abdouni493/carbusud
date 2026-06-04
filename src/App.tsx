@@ -1,0 +1,249 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import Layout from "./components/Layout";
+import { AppProvider, useAppState, useAppDispatch } from "./store/AppContext";
+import { ToastContainer } from "./components/Toast";
+import { useAuth } from "./hooks/useAuth";
+import { db, supabase, BUCKETS, getPublicUrl } from "./lib/supabase";
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+import Tanks from "./pages/Tanks";
+import Pumps from "./pages/Pumps";
+import Tracks from "./pages/Tracks";
+import Pompistes from "./pages/Pompistes";
+import BrigadeChefs from "./pages/BrigadeChefs";
+import Brigades from "./pages/Brigades";
+import FuelPOS from "./pages/POS";
+import Suppliers from "./pages/Suppliers";
+import DeliveryNotes from "./pages/DeliveryNotes";
+import Products from "./pages/Products";
+import Purchases from "./pages/Purchases";
+import FuelPurchases from "./pages/FuelPurchases";
+import Clients from "./pages/Clients";
+import ShopPOS from "./pages/ShopPOS";
+import DailyReport from "./pages/DailyReport";
+import Expenses from "./pages/Expenses";
+import Permissions from "./pages/Permissions";
+import Inventory from "./pages/Inventory";
+import Statistics from "./pages/Statistics";
+import Reports from "./pages/Reports";
+import Settings from "./pages/Settings";
+import Gerants from "./pages/Gerants";
+import MagasinWorkers from "./pages/MagasinWorkers";
+import MyBrigade from "./pages/MyBrigade";
+import MyPayments from "./pages/MyPayments";
+import MySettings from "./pages/MySettings";
+import ChefBrigade from "./pages/ChefBrigade";
+import Planning from "./pages/Planning";
+
+// ─── Loading screen ───────────────────────────────────────────────────────────
+const AppLoader = () => (
+  <div className="flex items-center justify-center min-h-screen"
+    style={{ background: "linear-gradient(135deg, #001233 0%, #003087 100%)" }}>
+    <div className="flex flex-col items-center gap-5">
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+        style={{ background: "linear-gradient(135deg, #FFB800, #e6a000)", boxShadow: "0 8px 24px rgba(255,184,0,0.4)" }}>
+        <span className="text-2xl">⛽</span>
+      </div>
+      <div className="w-10 h-10 border-4 border-white/20 border-t-[#FFB800] rounded-full animate-spin" />
+      <p className="text-white/60 font-semibold text-sm">Chargement de StationPro...</p>
+    </div>
+  </div>
+);
+
+// ─── DB loading overlay (shown while Supabase hydrates) ──────────────────────
+const DbLoader = () => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+    <div className="flex flex-col items-center gap-4 p-8 bg-white rounded-3xl shadow-2xl">
+      <div className="w-12 h-12 border-4 border-blue-100 border-t-[#003087] rounded-full animate-spin" />
+      <p className="text-slate-600 font-semibold text-sm">Chargement des données...</p>
+      <p className="text-slate-400 text-xs">Connexion à la base de données Supabase</p>
+    </div>
+  </div>
+);
+
+export default function App() {
+  const { i18n } = useTranslation();
+  const auth = useAuth();
+
+  useEffect(() => {
+    document.documentElement.dir  = i18n.dir();
+    document.documentElement.lang = i18n.language;
+  }, [i18n.language]);
+
+  // While checking session
+  if (auth.isLoading) return <AppLoader />;
+
+  // Not authenticated — show login
+  if (!auth.isAuthenticated) {
+    return (
+      <AppProvider>
+        <Login
+          onLogin={(role, userId) => auth.setManualAuth(role, userId)}
+        />
+      </AppProvider>
+    );
+  }
+
+  // Authenticated — load app with Supabase-connected state
+  return (
+    <AppProvider>
+      <AppContent
+        userRole={auth.userRole}
+        userId={auth.userId}
+        onLogout={auth.logout}
+      />
+    </AppProvider>
+  );
+}
+
+// ─── Inner app (needs AppProvider) ───────────────────────────────────────────
+function AppContent({
+  userRole,
+  userId,
+  onLogout,
+}: {
+  userRole: string;
+  userId?: string;
+  onLogout: () => void;
+}) {
+  const { toasts, isLoading } = useAppState();
+  const dispatch = useAppDispatch();
+
+  // Set current user in global state and load profile (name + avatar)
+  useEffect(() => {
+    dispatch({
+      type: 'SET_CURRENT_USER',
+      payload: { role: userRole as any, id: userId },
+    });
+
+    if (!userId) return;
+
+    // Load profile asynchronously so the avatar shows immediately after login
+    (async () => {
+      try {
+        if (userRole === 'admin') {
+          const profile = await db.getAdminProfile(userId);
+          if (profile) {
+            const avatarUrl = profile.avatar_url
+              ? (profile.avatar_url.startsWith('http')
+                  ? profile.avatar_url
+                  : getPublicUrl(BUCKETS.STATION_LOGOS, profile.avatar_url))
+              : undefined;
+            dispatch({
+              type: 'SET_CURRENT_USER',
+              payload: { role: userRole as any, id: userId, name: profile.name, avatarUrl },
+            });
+          }
+        } else {
+          // Worker: resolve via RPC
+          const { data: workerRow } = await supabase.rpc('get_my_worker');
+          if (workerRow) {
+            const w = workerRow as Record<string, unknown>;
+            const rawPhotoUrl = (w.photo_url ?? w.photo) as string | undefined;
+            const avatarUrl = rawPhotoUrl
+              ? (rawPhotoUrl.startsWith('http')
+                  ? rawPhotoUrl
+                  : getPublicUrl(BUCKETS.WORKER_PHOTOS, rawPhotoUrl))
+              : undefined;
+            dispatch({
+              type: 'SET_CURRENT_USER',
+              payload: { role: userRole as any, id: userId, name: w.name as string, avatarUrl },
+            });
+          }
+        }
+      } catch {
+        // Profile load is best-effort; silently ignore failures
+      }
+    })();
+  }, [userRole, userId, dispatch]);
+
+  return (
+    <>
+      {/* Show DB loading overlay while Supabase hydrates */}
+      {isLoading && <DbLoader />}
+
+      <ToastContainer
+        toasts={toasts}
+        onClose={(id) => dispatch({ type: 'REMOVE_TOAST', payload: id })}
+      />
+
+      <Router>
+        <AppRoutes onLogout={onLogout} />
+      </Router>
+    </>
+  );
+}
+
+// ─── Routes component (inside Router context so useNavigate works) ─────────────
+function AppRoutes({ onLogout }: { onLogout: () => void }) {
+  const navigate = useNavigate();
+
+  // Handle logout with redirect to login page
+  const handleLogout = async () => {
+    await onLogout();
+    navigate('/login', { replace: true });
+  };
+
+  return (
+    <Layout onLogout={handleLogout}>
+      <Routes>
+        <Route path="/dashboard"        element={<Dashboard />} />
+
+        {/* Operations */}
+        <Route path="/brigades"         element={<Brigades />} />
+        <Route path="/planning"         element={<Planning />} />
+        <Route path="/fuel-sales"       element={<FuelPOS />} />
+        <Route path="/pos"              element={<Navigate to="/fuel-sales" replace />} />
+
+        {/* Fuel */}
+        <Route path="/tanks"            element={<Tanks />} />
+        <Route path="/pumps"            element={<Pumps />} />
+        <Route path="/tracks"           element={<Tracks />} />
+        <Route path="/delivery-notes"   element={<DeliveryNotes />} />
+        <Route path="/fuel-purchases"   element={<FuelPurchases />} />
+
+        {/* Magasin */}
+        <Route path="/products"         element={<Products />} />
+        <Route path="/shop-pos"         element={<ShopPOS />} />
+        <Route path="/purchases"        element={<Purchases />} />
+        <Route path="/inventory"        element={<Inventory />} />
+
+        {/* Clients / Suppliers */}
+        <Route path="/clients"          element={<Clients />} />
+        <Route path="/suppliers"        element={<Suppliers />} />
+
+        {/* Personnel */}
+        <Route path="/pompistes"        element={<Pompistes />} />
+        <Route path="/brigade-chefs"    element={<BrigadeChefs />} />
+        <Route path="/gerants"          element={<Gerants />} />
+        <Route path="/magasin-workers"  element={<MagasinWorkers />} />
+        <Route path="/roles-permissions" element={<Permissions />} />
+
+        {/* Finances */}
+        <Route path="/expenses"         element={<Expenses />} />
+        <Route path="/daily-report"     element={<DailyReport />} />
+
+        {/* Analytics */}
+        <Route path="/statistics"       element={<Statistics />} />
+        <Route path="/reports"          element={<Reports />} />
+
+        {/* Settings & personal */}
+        <Route path="/settings"         element={<Settings />} />
+        <Route path="/my-brigade"       element={<MyBrigade />} />
+        <Route path="/my-payments"      element={<MyPayments />} />
+        <Route path="/my-settings"      element={<MySettings />} />
+        <Route path="/chef-brigade"     element={<ChefBrigade />} />
+
+        {/* Default */}
+        <Route path="*"                 element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </Layout>
+  );
+}

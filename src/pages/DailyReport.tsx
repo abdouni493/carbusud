@@ -1,0 +1,851 @@
+import React, { useState, useMemo, useRef } from "react";
+import {
+  FileText, Calendar, Download, Printer, Droplets, Users,
+  CreditCard, ShoppingCart, Package, TrendingDown, TrendingUp,
+  ChevronRight, X, AlertCircle, RefreshCcw, Loader2, Fuel,
+  Building2, Gauge, Wrench, DollarSign, BarChart2, Clock,
+  CheckCircle2, ArrowUpRight, ArrowDownRight, Star, Zap
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { cn } from "@/src/lib/utils";
+import { useAppState, useAppDispatch } from "../store/AppContext";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
+import Skeleton from "../components/Skeleton";
+
+/* ─── Brand palette (mirrors the Sidebar) ─── */
+const C = {
+  blue900: "#001233",
+  blue800: "#001f5c",
+  blue700: "#002d87",
+  blue600: "#003087",
+  gold:    "#FFB800",
+  goldDim: "rgba(255,184,0,0.15)",
+};
+
+/* ─── Reusable stat card ─── */
+const StatCard = ({ icon: Icon, label, value, sub, color = "blue", trend }: any) => {
+  const colors: Record<string, string> = {
+    blue:   "from-blue-900 to-blue-800",
+    gold:   "from-amber-500 to-amber-600",
+    green:  "from-emerald-600 to-emerald-700",
+    red:    "from-red-600 to-red-700",
+    purple: "from-purple-700 to-purple-800",
+  };
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`bg-gradient-to-br ${colors[color]} rounded-3xl p-6 text-white relative overflow-hidden shadow-2xl`}
+    >
+      <div className="absolute top-0 right-0 w-28 h-28 rounded-full bg-white opacity-5 -translate-y-1/3 translate-x-1/3" />
+      <div className="flex items-start justify-between mb-4">
+        <div className="w-10 h-10 bg-white/15 rounded-2xl flex items-center justify-center">
+          <Icon className="w-5 h-5 text-white" />
+        </div>
+        {trend !== undefined && (
+          <span className={cn("text-[10px] font-black px-2 py-1 rounded-full flex items-center gap-1",
+            trend >= 0 ? "bg-green-400/20 text-green-300" : "bg-red-400/20 text-red-300")}>
+            {trend >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+            {Math.abs(trend).toFixed(1)}%
+          </span>
+        )}
+      </div>
+      <p className="text-[10px] font-black uppercase tracking-[0.25em] opacity-50 mb-1">{label}</p>
+      <p className="text-2xl font-black leading-none tracking-tighter">{value}</p>
+      {sub && <p className="text-[10px] opacity-40 mt-1 font-bold uppercase tracking-widest">{sub}</p>}
+    </motion.div>
+  );
+};
+
+/* ─── Section header ─── */
+const SectionHeader = ({ num, label, icon: Icon, colorClass = "bg-blue-900/10 text-blue-800" }: any) => (
+  <div className="flex items-center gap-4 pb-5 border-b-2 border-blue-900/8 mb-8">
+    <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center font-black text-sm shadow-inner", colorClass)}>
+      {num}
+    </div>
+    <div className="flex items-center gap-3">
+      <Icon className="w-5 h-5 text-blue-900/40" />
+      <h3 className="text-xs font-black text-blue-900 uppercase tracking-[0.35em]">{label}</h3>
+    </div>
+  </div>
+);
+
+/* ─── Main Component ─── */
+const DailyReport = () => {
+  const dispatch = useAppDispatch();
+  const {
+    tanks, brigades, pumps, deliveryNotes, products, expenses,
+    fuelSales, shopSales, settings, brigadeChefs, pompistes, purchases, clients
+  } = useAppState();
+
+  const reportRef = useRef<HTMLDivElement>(null);
+  const [isGenerated, setIsGenerated] = useState(false);
+  const [isLoading, setIsLoading]     = useState(false);
+  const [startDate, setStartDate]     = useState(new Date().toISOString().split("T")[0]);
+  const [endDate, setEndDate]         = useState(new Date().toISOString().split("T")[0]);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+
+  const handleGenerate = () => {
+    setIsLoading(true);
+    setTimeout(() => {
+      setIsGenerated(true);
+      setIsLoading(false);
+      dispatch({ type: "ADD_TOAST", payload: { type: "success", message: "Rapport généré avec succès" } });
+    }, 1400);
+  };
+
+  /* ─── All computed report data ─── */
+  const reportData = useMemo(() => {
+    if (!isGenerated) return null;
+
+    const start = new Date(startDate);
+    const end   = new Date(endDate);
+    end.setHours(23, 59, 59);
+    const inRange = (d: string) => { const dt = new Date(d); return dt >= start && dt <= end; };
+
+    const selFuel     = fuelSales.filter(s => inRange(s.date));
+    const selShop     = shopSales.filter(s => inRange(s.date));
+    const selExp      = expenses.filter(e => inRange(e.date));
+    const selBrigades = brigades.filter(b => inRange(b.date));
+    const selDel      = deliveryNotes.filter(d => inRange(d.date));
+    const selPurch    = purchases.filter(p => inRange(p.date));
+
+    /* 1. TANKS */
+    const tankSummary = tanks.map(tank => {
+      const received  = selDel.filter(d => d.tankId === tank.id).reduce((a, c) => a + c.liters, 0);
+      const sold      = selFuel.filter(s => pumps.find(p => p.id === s.pumpId)?.tankId === tank.id)
+                                .reduce((a, c) => a + c.liters, 0);
+      const startLvl  = tank.current - received + sold;
+      const theorEnd  = startLvl + received - sold;
+      const gap       = tank.current - theorEnd;
+
+      // Brigades that touched this tank
+      const tankBrigades = selBrigades.filter(b =>
+        b.startTankLevels && tank.id in b.startTankLevels
+      ).map(b => ({
+        brigadeId: b.id,
+        date: b.date,
+        shift: b.shift,
+        startDeg:   b.startTankLevels?.[tank.id]?.degrees ?? 0,
+        startLit:   b.startTankLevels?.[tank.id]?.liters  ?? 0,
+        endDeg:     b.endTankLevels?.[tank.id]?.degrees   ?? 0,
+        endLit:     b.endTankLevels?.[tank.id]?.liters    ?? 0,
+      }));
+
+      return { id: tank.id, name: tank.name, type: tank.type, capacity: tank.capacity,
+               current: tank.current, received, sold, startLvl, gap, tankBrigades };
+    });
+
+    /* 2. PUMPS */
+    const pumpSummary = pumps.map(pump => {
+      const tank = tanks.find(t => t.id === pump.tankId);
+      const pSales = selFuel.filter(s => s.pumpId === pump.id);
+      const totalLiters = pSales.reduce((a, c) => a + c.liters, 0);
+      const totalRevenue = pSales.reduce((a, c) => a + c.total, 0);
+
+      // Per-brigade index readings
+      const brigadeIndices = selBrigades
+        .filter(b => b.startIndices && pump.id in b.startIndices)
+        .map(b => ({
+          brigadeId: b.id,
+          date:      b.date,
+          shift:     b.shift,
+          chefName:  brigadeChefs.find(c => c.id === b.chefId)?.name ?? b.chefId,
+          startIdx:  b.startIndices?.[pump.id] ?? 0,
+          endIdx:    b.endIndices?.[pump.id]   ?? 0,
+          diffLiters:(b.endIndices?.[pump.id] ?? 0) - (b.startIndices?.[pump.id] ?? 0),
+        }));
+
+      return { id: pump.id, name: pump.name, type: pump.type, status: pump.status,
+               tankName: tank?.name ?? "—", lastIndex: pump.lastIndex,
+               totalLiters, totalRevenue, brigadeIndices };
+    });
+
+    /* 3. BRIGADES */
+    const brigadeDetails = selBrigades.map(b => {
+      const chef       = brigadeChefs.find(c => c.id === b.chefId);
+      const pomps      = (b.pompisteIds ?? []).map(pid => pompistes.find(p => p.id === pid)).filter(Boolean);
+      const bFuel      = selFuel.filter(s => s.brigadeId === b.id);
+      const totalLiters  = bFuel.reduce((a, c) => a + c.liters, 0);
+      const totalRevenue = bFuel.reduce((a, c) => a + c.total, 0);
+
+      // Per-pompiste data
+      const pompisteBreakdown = pomps.map(pomp => {
+        if (!pomp) return null;
+        const pSales = bFuel.filter(s => s.pompisteId === pomp.id);
+        const liters = pSales.reduce((a, c) => a + c.liters, 0);
+        const revenue= pSales.reduce((a, c) => a + c.total, 0);
+        const pd     = b.pompisteData?.[pomp.id];
+        return { name: pomp.name, liters, revenue, decalage: pd?.decalage ?? 0,
+                 cash: pd?.collected.cash ?? 0, bons: pd?.collected.bons ?? 0,
+                 cheques: pd?.collected.cheques ?? 0 };
+      }).filter(Boolean);
+
+      const totalDecalage = (b.pompisteData
+        ? Object.values(b.pompisteData).reduce((a, d: any) => a + (d.decalage ?? 0), 0)
+        : 0);
+
+      return { id: b.id, date: b.date, shift: b.shift, chefName: chef?.name ?? "—",
+               status: b.status, startTime: b.startTime, endTime: b.endTime,
+               pomps: pompisteBreakdown, totalLiters, totalRevenue, totalDecalage };
+    });
+
+    /* 4. PAYMENT BREAKDOWN */
+    const payments = {
+      especes: [...selFuel, ...selShop].filter(s => s.paymentMode === "ESPECES").reduce((a, c) => a + c.total, 0),
+      bons:     selFuel.filter(s => s.paymentMode === "BON").reduce((a, c) => a + c.total, 0),
+      cheques:  selFuel.filter(s => s.paymentMode === "CHEQUE").reduce((a, c) => a + c.total, 0),
+      credit:   selFuel.filter(s => s.paymentMode === "CREDIT").reduce((a, c) => a + c.total, 0),
+      avance:   selFuel.filter(s => s.paymentMode === "AVANCE").reduce((a, c) => a + c.total, 0),
+    };
+
+    /* 5. SHOP */
+    const shopRevenue  = selShop.reduce((a, c) => a + c.total, 0);
+    const shopEspeces  = selShop.filter(s => s.paymentMode === "ESPECES").reduce((a, c) => a + c.total, 0);
+    const shopDette    = selShop.filter(s => s.status === "Dette").reduce((a, c) => a + c.total, 0);
+    const topShopProds = (() => {
+      const counts: Record<string, { qty: number; rev: number }> = {};
+      selShop.forEach(s => s.items.forEach(i => {
+        if (!counts[i.productName]) counts[i.productName] = { qty: 0, rev: 0 };
+        counts[i.productName].qty += i.quantity;
+        counts[i.productName].rev += i.quantity * i.price;
+      }));
+      return Object.entries(counts).map(([n, v]) => ({ name: n, qty: v.qty, rev: v.rev }))
+                   .sort((a, b) => b.rev - a.rev).slice(0, 8);
+    })();
+
+    /* 6. PURCHASES */
+    const fuelPurchasesTotal = selDel.reduce((a, c) => a + c.total, 0);
+    const shopPurchasesTotal = selPurch.filter(p => p.type === "RECEPTION").reduce((a, c) => a + c.total, 0);
+    const totalExpenses      = selExp.reduce((a, c) => a + c.amount, 0);
+    const expByCategory: Record<string, number> = {};
+    selExp.forEach(e => { expByCategory[e.category] = (expByCategory[e.category] ?? 0) + e.amount; });
+
+    /* 7. FINANCIAL SUMMARY */
+    const fuelRevenue  = selFuel.reduce((a, c) => a + c.total, 0);
+    const totalRevenue = fuelRevenue + shopRevenue;
+    const totalCost    = fuelPurchasesTotal + shopPurchasesTotal + totalExpenses;
+    const grossProfit  = totalRevenue - fuelPurchasesTotal;
+    const netProfit    = totalRevenue - totalCost;
+
+    /* 8. DEBTS */
+    const clientDebts  = clients.filter(c => c.debt > 0)
+                                .reduce((a, c) => a + c.debt, 0);
+
+    return {
+      tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
+      topShopProds, fuelRevenue, totalRevenue, fuelPurchasesTotal, shopPurchasesTotal,
+      totalExpenses, expByCategory, grossProfit, netProfit, clientDebts,
+      fuelCount: selFuel.length, shopCount: selShop.length,
+      totalLiters: selFuel.reduce((a, c) => a + c.liters, 0),
+    };
+  }, [isGenerated, startDate, endDate, fuelSales, shopSales, expenses, brigades,
+      tanks, pumps, deliveryNotes, purchases, brigadeChefs, pompistes, clients]);
+
+  /* ─── Export ─── */
+  const exportPDF = async () => {
+    if (!reportRef.current) return;
+    const canvas  = await html2canvas(reportRef.current, { scale: 2, backgroundColor: "#ffffff" });
+    const imgData = canvas.toDataURL("image/png");
+    const pdf     = new jsPDF("p", "mm", "a4");
+    const w       = pdf.internal.pageSize.getWidth();
+    const h       = (canvas.height * w) / canvas.width;
+    pdf.addImage(imgData, "PNG", 0, 0, w, h);
+    pdf.save(`Journal_Activite_${startDate}_${endDate}.pdf`);
+  };
+
+  const sections = [
+    { id: "tanks",     label: "Cuves"        },
+    { id: "pumps",     label: "Pompes"       },
+    { id: "brigades",  label: "Brigades"     },
+    { id: "finance",   label: "Encaissements"},
+    { id: "shop",      label: "Magasin"      },
+    { id: "purchases", label: "Achats"       },
+    { id: "bilan",     label: "Bilan"        },
+  ];
+
+  return (
+    <div className="space-y-8 max-w-[1600px] mx-auto pb-24 text-left">
+
+      {/* ══════ PAGE HEADER ══════ */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg"
+                 style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
+              <FileText className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-[0.35em] text-blue-900/40">Journal d'Activité</span>
+          </div>
+          <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none"
+              style={{ color: C.blue800 }}>
+            Fiche Journalière
+          </h1>
+          <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.3em] mt-2">
+            Consolidation multisectorielle des opérations de la station
+          </p>
+        </div>
+        {isGenerated && (
+          <div className="flex gap-3">
+            <button onClick={exportPDF}
+              className="h-12 px-6 bg-white border border-slate-200 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:border-blue-900 hover:text-blue-900 transition-all shadow-sm">
+              <Download className="w-4 h-4" /> PDF
+            </button>
+            <button onClick={() => window.print()}
+              className="h-12 px-6 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl transition-all hover:scale-105"
+              style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
+              <Printer className="w-4 h-4" /> IMPRIMER
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ══════ FILTER BAR ══════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-3xl shadow-xl border border-slate-100 p-6 flex flex-wrap items-end gap-6"
+      >
+        {[
+          { label: "Date de début", val: startDate, set: setStartDate },
+          { label: "Date de fin",   val: endDate,   set: setEndDate   },
+        ].map(f => (
+          <div key={f.label} className="space-y-2 flex-1 min-w-[180px]">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{f.label}</label>
+            <div className="relative">
+              <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+              <input type="date"
+                className="h-13 w-full bg-slate-50 border border-slate-100 rounded-2xl pl-11 pr-4 text-sm font-black text-blue-900 outline-none focus:ring-2 focus:ring-blue-900/10 transition-all"
+                value={f.val} onChange={e => f.set(e.target.value)} />
+            </div>
+          </div>
+        ))}
+        <button onClick={handleGenerate} disabled={isLoading}
+          className="h-13 px-10 rounded-2xl font-black text-xs uppercase tracking-[0.2em] text-white shadow-2xl hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-3 disabled:opacity-50"
+          style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})`,
+                   boxShadow: `0 12px 35px ${C.blue600}40` }}>
+          {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+          {isLoading ? "GÉNÉRATION…" : "GÉNÉRER LE RAPPORT"}
+        </button>
+      </motion.div>
+
+      {/* ══════ SECTION NAV (when generated) ══════ */}
+      <AnimatePresence>
+        {isGenerated && reportData && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className="flex flex-wrap gap-2">
+            {sections.map(s => (
+              <button key={s.id}
+                onClick={() => {
+                  setActiveSection(activeSection === s.id ? null : s.id);
+                  document.getElementById(`section-${s.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                  activeSection === s.id
+                    ? "text-white shadow-lg"
+                    : "bg-white border border-slate-100 text-slate-400 hover:border-blue-900/30 hover:text-blue-900"
+                )}
+                style={activeSection === s.id ? { background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` } : {}}>
+                {s.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ══════ LOADING SKELETON ══════ */}
+      {isLoading && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl" />)}
+          </div>
+          <Skeleton className="h-96 rounded-3xl" />
+          <Skeleton className="h-64 rounded-3xl" />
+        </div>
+      )}
+
+      {/* ══════ EMPTY STATE ══════ */}
+      {!isGenerated && !isLoading && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          className="h-[500px] flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-[3rem] group hover:border-blue-900/20 transition-all">
+          <div className="w-32 h-32 bg-slate-50 rounded-[3rem] flex items-center justify-center mb-8 shadow-inner">
+            <FileText className="w-14 h-14 text-slate-200" />
+          </div>
+          <p className="font-black text-[11px] uppercase tracking-[0.4em] text-slate-300 max-w-xs text-center leading-relaxed">
+            Sélectionnez une plage de dates et générez le rapport consolidé
+          </p>
+        </motion.div>
+      )}
+
+      {/* ══════ GENERATED REPORT ══════ */}
+      {isGenerated && reportData && !isLoading && (
+        <motion.div ref={reportRef} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+          className="space-y-10 print-section">
+
+          {/* ─── Company Header ─── */}
+          <div className="rounded-3xl overflow-hidden shadow-2xl"
+               style={{ background: `linear-gradient(135deg, ${C.blue900} 0%, ${C.blue800} 45%, ${C.blue600} 100%)` }}>
+            <div className="p-8 flex flex-col md:flex-row justify-between items-start gap-6">
+              <div className="flex items-center gap-6">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl shadow-2xl"
+                     style={{ background: `linear-gradient(135deg, ${C.gold}, #e6a000)`, color: C.blue800 }}>
+                  {(settings.name || "S").charAt(0)}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black text-white uppercase tracking-tight leading-none">
+                    {settings.name || "STATIONPRO NAFTAL"}
+                  </h2>
+                  <p className="text-[10px] font-black uppercase tracking-[0.35em] mt-1"
+                     style={{ color: `rgba(255,184,0,0.6)` }}>
+                    {settings.address || "Zone Industrielle"}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right space-y-2">
+                <div className="inline-block px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-[0.35em] text-blue-900"
+                     style={{ background: C.gold }}>
+                  Journal d'Activité
+                </div>
+                <p className="text-white font-black text-sm">Du {startDate} au {endDate}</p>
+              </div>
+            </div>
+            {/* KPI Bar */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-white/10">
+              {[
+                { icon: Droplets,   label: "Litres Distribués",  value: `${reportData.totalLiters.toLocaleString()} L` },
+                { icon: DollarSign, label: "Recette Totale",      value: `${reportData.totalRevenue.toLocaleString()} DA` },
+                { icon: TrendingUp, label: "Bénéfice Net",        value: `${reportData.netProfit.toLocaleString()} DA` },
+                { icon: Users,      label: "Brigades Actives",    value: `${reportData.brigadeDetails.length}` },
+              ].map((kpi, i) => (
+                <div key={i} className="p-5 bg-white/5 flex items-center gap-4">
+                  <kpi.icon className="w-8 h-8 flex-shrink-0" style={{ color: C.gold }} />
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-white/40">{kpi.label}</p>
+                    <p className="text-xl font-black text-white tracking-tighter leading-none">{kpi.value}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ─── SECTION 1: CUVES ─── */}
+          <section id="section-tanks" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+            <SectionHeader num="01" label="Cuves & Stocks Carburant" icon={Gauge}
+              colorClass="bg-blue-50 text-blue-700" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {reportData.tankSummary.map((tank, idx) => (
+                <motion.div key={tank.id}
+                  initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.07 }}
+                  className="border border-slate-100 rounded-2xl overflow-hidden hover:border-blue-900/20 transition-all group">
+                  {/* Tank header */}
+                  <div className="px-6 py-4 flex items-center justify-between"
+                       style={{ background: `linear-gradient(90deg, ${C.blue800}10, ${C.blue600}08)` }}>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-black shadow"
+                           style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
+                        <Droplets className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="font-black text-blue-900 uppercase text-sm tracking-tight leading-none">{tank.name}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">{tank.type}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Capacité</p>
+                      <p className="font-black text-blue-900 text-sm">{tank.capacity.toLocaleString()} L</p>
+                    </div>
+                  </div>
+                  {/* Tank stats */}
+                  <div className="p-6 grid grid-cols-3 gap-4">
+                    {[
+                      { label: "Stock Début",    value: `${tank.startLvl.toLocaleString()} L`,    color: "text-slate-600" },
+                      { label: "Livraisons (+)", value: `+${tank.received.toLocaleString()} L`,   color: "text-green-600" },
+                      { label: "Ventes (-)",     value: `-${tank.sold.toLocaleString()} L`,        color: "text-red-500"   },
+                    ].map(stat => (
+                      <div key={stat.label} className="text-center p-3 bg-slate-50 rounded-xl">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">{stat.label}</p>
+                        <p className={cn("font-black text-base leading-none", stat.color)}>{stat.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Current level */}
+                  <div className="px-6 pb-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Niveau Actuel</p>
+                      <p className="text-2xl font-black text-blue-900 tracking-tighter">{tank.current.toLocaleString()} L</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Écart Comptable</p>
+                      <span className={cn("px-3 py-1 rounded-full font-black text-sm",
+                        tank.gap === 0 ? "bg-green-50 text-green-600" :
+                        Math.abs(tank.gap) < tank.capacity * 0.02 ? "bg-amber-50 text-amber-600" :
+                        "bg-red-50 text-red-600")}>
+                        {tank.gap > 0 ? "+" : ""}{tank.gap.toFixed(0)} L
+                      </span>
+                    </div>
+                  </div>
+                  {/* Brigade-level details */}
+                  {tank.tankBrigades.length > 0 && (
+                    <div className="border-t border-slate-100 p-4">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Relevés par Brigade</p>
+                      <div className="space-y-2">
+                        {tank.tankBrigades.map(tb => (
+                          <div key={tb.brigadeId} className="flex items-center justify-between text-[10px] bg-slate-50 px-3 py-2 rounded-lg">
+                            <span className="font-bold text-slate-600">{tb.date} • {tb.shift}</span>
+                            <div className="flex gap-4">
+                              <span className="text-blue-800 font-black">Déb: {tb.startLit.toFixed(0)} L ({tb.startDeg}°)</span>
+                              <span className="text-blue-600 font-black">Fin: {tb.endLit.toFixed(0)} L ({tb.endDeg}°)</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+            </div>
+          </section>
+
+          {/* ─── SECTION 2: POMPES & INDEX ─── */}
+          <section id="section-pumps" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+            <SectionHeader num="02" label="Pompes & Index de Distribution" icon={Wrench}
+              colorClass="bg-amber-50 text-amber-700" />
+            <div className="overflow-hidden rounded-2xl border border-slate-100">
+              <table className="w-full text-left">
+                <thead style={{ background: `${C.blue800}0A` }}>
+                  <tr>
+                    {["Pompe","Cuve","Type","Dernier Index","Litres Distribués","Recette","Statut"].map(h => (
+                      <th key={h} className="px-5 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {reportData.pumpSummary.map((pump, idx) => (
+                    <React.Fragment key={pump.id}>
+                      <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: idx * 0.04 }}
+                        className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[10px] font-black"
+                                 style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
+                              <Wrench className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="font-black text-blue-900 text-sm uppercase">{pump.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-sm font-bold text-slate-500">{pump.tankName}</td>
+                        <td className="px-5 py-4">
+                          <span className="px-2 py-1 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-black uppercase">{pump.type}</span>
+                        </td>
+                        <td className="px-5 py-4 font-black text-blue-900 text-sm">{pump.lastIndex.toLocaleString()}</td>
+                        <td className="px-5 py-4 font-black text-blue-900 text-sm">{pump.totalLiters.toLocaleString()} L</td>
+                        <td className="px-5 py-4 font-black text-green-600 text-sm">{pump.totalRevenue.toLocaleString()} DA</td>
+                        <td className="px-5 py-4">
+                          <span className={cn("px-2 py-1 rounded-lg text-[10px] font-black uppercase",
+                            pump.status === "Actif" ? "bg-green-50 text-green-700" :
+                            pump.status === "Maintenance" ? "bg-amber-50 text-amber-700" :
+                            "bg-red-50 text-red-700")}>
+                            {pump.status}
+                          </span>
+                        </td>
+                      </motion.tr>
+                      {/* Per-brigade index rows */}
+                      {pump.brigadeIndices.map(bi => (
+                        <tr key={bi.brigadeId} className="bg-slate-50/30">
+                          <td colSpan={2} className="pl-16 pr-4 py-2 text-[10px] text-slate-400 font-bold">
+                            ↳ {bi.date} — {bi.shift} — {bi.chefName}
+                          </td>
+                          <td className="px-5 py-2 text-[10px] font-bold text-slate-400">Index Déb: <span className="text-blue-900 font-black">{bi.startIdx}</span></td>
+                          <td className="px-5 py-2 text-[10px] font-bold text-slate-400">Index Fin: <span className="text-blue-900 font-black">{bi.endIdx}</span></td>
+                          <td className="px-5 py-2 text-[10px] font-black text-blue-700">{bi.diffLiters.toLocaleString()} L</td>
+                          <td colSpan={2} />
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* ─── SECTION 3: BRIGADES ─── */}
+          <section id="section-brigades" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+            <SectionHeader num="03" label="Brigades & Pompistes" icon={Users}
+              colorClass="bg-purple-50 text-purple-700" />
+            <div className="space-y-5">
+              {reportData.brigadeDetails.length === 0 && (
+                <p className="text-slate-300 font-black text-sm text-center py-12 uppercase tracking-widest">Aucune brigade pour cette période</p>
+              )}
+              {reportData.brigadeDetails.map((b, bi) => (
+                <motion.div key={b.id}
+                  initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: bi * 0.06 }}
+                  className="border border-slate-100 rounded-2xl overflow-hidden">
+                  {/* Brigade Header */}
+                  <div className="p-5 flex flex-wrap items-center justify-between gap-4"
+                       style={{ background: `linear-gradient(90deg, ${C.blue900}08, ${C.blue600}06)` }}>
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-white"
+                           style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
+                        {b.chefName.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-black text-blue-900 uppercase text-sm tracking-tight">{b.chefName}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{b.id} • {b.date} • {b.shift}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      {b.startTime && (
+                        <span className="text-[10px] font-black text-slate-500 flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {b.startTime} → {b.endTime}
+                        </span>
+                      )}
+                      <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                        b.status === "Clôturée" ? "bg-green-50 text-green-700" :
+                        b.status === "Ouverte"  ? "bg-blue-50 text-blue-700" :
+                        "bg-slate-100 text-slate-500")}>
+                        {b.status}
+                      </span>
+                      {b.totalDecalage !== 0 && (
+                        <span className={cn("px-3 py-1 rounded-full text-[10px] font-black",
+                          b.totalDecalage >= 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600")}>
+                          Décalage: {b.totalDecalage >= 0 ? "+" : ""}{b.totalDecalage.toLocaleString()} DA
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Brigade summary */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-slate-100">
+                    {[
+                      { label: "Volume Distribué",  value: `${b.totalLiters.toLocaleString()} L`, color: "text-blue-800" },
+                      { label: "Encaissement Total", value: `${b.totalRevenue.toLocaleString()} DA`, color: "text-green-700" },
+                      { label: "Pompistes",          value: `${b.pomps.length} agents`, color: "text-blue-600" },
+                    ].map(s => (
+                      <div key={s.label} className="p-4 bg-white">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{s.label}</p>
+                        <p className={cn("font-black text-lg leading-none", s.color)}>{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Per-pompiste breakdown */}
+                  {b.pomps.length > 0 && (
+                    <div className="p-5">
+                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Détails par Pompiste</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50">
+                            <tr>
+                              {["Pompiste","Litres","Recette","Espèces","Bons","Chèques","Décalage"].map(h => (
+                                <th key={h} className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {b.pomps.map((p: any) => (
+                              <tr key={p.name} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-lg bg-blue-900 text-white flex items-center justify-center text-[9px] font-black">
+                                      {p.name.charAt(0)}
+                                    </div>
+                                    <span className="font-black text-blue-900 uppercase">{p.name}</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 font-black text-blue-800">{p.liters.toLocaleString()} L</td>
+                                <td className="px-4 py-3 font-black text-green-700">{p.revenue.toLocaleString()} DA</td>
+                                <td className="px-4 py-3 font-bold text-slate-600">{p.cash.toLocaleString()} DA</td>
+                                <td className="px-4 py-3 font-bold text-slate-600">{p.bons.toLocaleString()} DA</td>
+                                <td className="px-4 py-3 font-bold text-slate-600">{p.cheques.toLocaleString()} DA</td>
+                                <td className="px-4 py-3">
+                                  <span className={cn("font-black text-sm", p.decalage >= 0 ? "text-green-600" : "text-red-600")}>
+                                    {p.decalage >= 0 ? "+" : ""}{p.decalage.toLocaleString()} DA
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+            </div>
+          </section>
+
+          {/* ─── SECTION 4: FINANCE ─── */}
+          <div id="section-finance" className="grid md:grid-cols-2 gap-6">
+            <section className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+              <SectionHeader num="04" label="Encaissements Carburant" icon={CreditCard}
+                colorClass="bg-green-50 text-green-700" />
+              <div className="space-y-3">
+                {[
+                  { label: "Espèces (Cash)",        v: reportData.payments.especes, icon: DollarSign, c: "text-green-700"  },
+                  { label: "Bons / Coupons",         v: reportData.payments.bons,    icon: FileText,   c: "text-blue-700"  },
+                  { label: "Chèques / Virements",    v: reportData.payments.cheques, icon: CreditCard, c: "text-purple-700"},
+                  { label: "Crédit Clients",         v: reportData.payments.credit,  icon: AlertCircle,c: "text-orange-600"},
+                  { label: "Avances Clients",        v: reportData.payments.avance,  icon: Star,        c: "text-indigo-600"},
+                ].map(row => (
+                  <div key={row.label} className="flex justify-between items-center p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <row.icon className={cn("w-4 h-4", row.c)} />
+                      <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">{row.label}</span>
+                    </div>
+                    <span className={cn("font-black text-base tracking-tighter", row.c)}>
+                      {row.v.toLocaleString()} DA
+                    </span>
+                  </div>
+                ))}
+                <div className="p-5 rounded-2xl text-white font-black flex justify-between items-center"
+                     style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
+                  <span className="text-[10px] uppercase tracking-[0.3em] opacity-70">Total Carburant</span>
+                  <span className="text-2xl tracking-tighter">
+                    {(reportData.payments.especes + reportData.payments.bons + reportData.payments.cheques + reportData.payments.credit + reportData.payments.avance).toLocaleString()} DA
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <section className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+              <SectionHeader num="05" label="Ventes Magasin" icon={ShoppingCart}
+                colorClass="bg-orange-50 text-orange-700" />
+              <div className="space-y-3">
+                {[
+                  { label: "Ventes Espèces", v: reportData.shopEspeces, c: "text-green-700"  },
+                  { label: "Ventes à Crédit / Dettes", v: reportData.shopDette, c: "text-red-600" },
+                  { label: "Autres Modes", v: reportData.shopRevenue - reportData.shopEspeces - reportData.shopDette, c: "text-blue-700" },
+                ].map(row => (
+                  <div key={row.label} className="flex justify-between items-center p-4 rounded-xl bg-slate-50">
+                    <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">{row.label}</span>
+                    <span className={cn("font-black text-base", row.c)}>{row.v.toLocaleString()} DA</span>
+                  </div>
+                ))}
+                <div className="p-5 rounded-2xl font-black flex justify-between items-center"
+                     style={{ background: `linear-gradient(135deg, ${C.gold}20, ${C.gold}10)`, border: `1px solid ${C.gold}40` }}>
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-blue-900/60">Total Magasin</span>
+                  <span className="text-2xl tracking-tighter text-blue-900">{reportData.shopRevenue.toLocaleString()} DA</span>
+                </div>
+              </div>
+              {/* Top products */}
+              {reportData.topShopProds.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Top Articles Vendus</p>
+                  <div className="space-y-2">
+                    {reportData.topShopProds.map((p, i) => (
+                      <div key={i} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-slate-300 w-5">{i + 1}.</span>
+                          <span className="text-[11px] font-black text-blue-900 uppercase tracking-tight">{p.name}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[10px] font-bold text-slate-400">{p.qty} unités</span>
+                          <span className="text-[11px] font-black text-green-600">{p.rev.toLocaleString()} DA</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* ─── SECTION 6: ACHATS & DÉPENSES ─── */}
+          <section id="section-purchases" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+            <SectionHeader num="06" label="Achats & Dépenses d'Exploitation" icon={Package}
+              colorClass="bg-red-50 text-red-700" />
+            <div className="grid md:grid-cols-3 gap-5">
+              <StatCard icon={Fuel}      label="Achats Carburant (BL)"  value={`${reportData.fuelPurchasesTotal.toLocaleString()} DA`}  color="blue" />
+              <StatCard icon={Package}   label="Achats Magasin"          value={`${reportData.shopPurchasesTotal.toLocaleString()} DA`}  color="purple" />
+              <StatCard icon={TrendingDown} label="Dépenses Exploitation" value={`${reportData.totalExpenses.toLocaleString()} DA`}    color="red" />
+            </div>
+            {Object.keys(reportData.expByCategory).length > 0 && (
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Répartition des Dépenses</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Object.entries(reportData.expByCategory).map(([cat, amount]) => (
+                    <div key={cat} className="p-4 bg-red-50 border border-red-100 rounded-2xl">
+                      <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-1">{cat}</p>
+                      <p className="font-black text-red-700 text-lg leading-none">{(amount as number).toLocaleString()} DA</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* ─── SECTION 7: BILAN FINAL ─── */}
+          <section id="section-bilan"
+            className="rounded-3xl overflow-hidden shadow-2xl"
+            style={{ background: `linear-gradient(135deg, ${C.blue900} 0%, ${C.blue800} 50%, ${C.blue600} 100%)` }}>
+            <div className="p-8">
+              <div className="flex items-center gap-3 mb-8">
+                <BarChart2 className="w-6 h-6" style={{ color: C.gold }} />
+                <h3 className="text-xs font-black uppercase tracking-[0.4em] text-white/60">07 — Bilan Financier Final</h3>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                {[
+                  { label: "Recette Carburant", value: reportData.fuelRevenue,         positive: true  },
+                  { label: "Recette Magasin",   value: reportData.shopRevenue,         positive: true  },
+                  { label: "Total Achats",       value: -(reportData.fuelPurchasesTotal + reportData.shopPurchasesTotal), positive: false },
+                  { label: "Total Dépenses",     value: -reportData.totalExpenses,     positive: false },
+                ].map(row => (
+                  <div key={row.label} className="p-5 rounded-2xl bg-white/8 border border-white/10">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-white/40 mb-2">{row.label}</p>
+                    <p className={cn("text-xl font-black tracking-tighter", row.positive ? "text-green-300" : "text-red-300")}>
+                      {row.positive ? "+" : ""}{row.value.toLocaleString()} DA
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {/* Net result */}
+              <div className="p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4"
+                   style={{ background: `linear-gradient(135deg, ${C.gold}25, ${C.gold}10)`, border: `1px solid ${C.gold}40` }}>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.5em] text-white/50 mb-1">Résultat Net de la Période</p>
+                  <p className="text-[10px] font-bold text-white/30 uppercase">Recettes Totales − Achats − Dépenses</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-6xl font-black tracking-tighter leading-none"
+                     style={{ color: reportData.netProfit >= 0 ? "#4ade80" : "#f87171" }}>
+                    {reportData.netProfit >= 0 ? "+" : ""}{reportData.netProfit.toLocaleString()}
+                  </p>
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-white/30 mt-1">DINARS ALGÉRIENS (DA)</p>
+                </div>
+              </div>
+              {reportData.clientDebts > 0 && (
+                <div className="mt-4 flex items-center justify-between p-4 rounded-xl bg-orange-400/10 border border-orange-400/20">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-4 h-4 text-orange-300" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-orange-300">Créances Clients en Cours</span>
+                  </div>
+                  <span className="font-black text-orange-300 text-lg">{reportData.clientDebts.toLocaleString()} DA</span>
+                </div>
+              )}
+            </div>
+            {/* Signatures */}
+            <div className="grid grid-cols-2 gap-8 p-8 border-t border-white/10">
+              {["Signature Chef de Station", "Cachet & Signature Gérant"].map(sig => (
+                <div key={sig}>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-white/20 border-b border-white/10 pb-2">{sig}</p>
+                  <div className="h-16" />
+                </div>
+              ))}
+            </div>
+          </section>
+
+        </motion.div>
+      )}
+
+      <style>{`
+        @media print {
+          body > * { display: none; }
+          .print-section { display: block !important; position: static !important; }
+        }
+        h-13 { height: 3.25rem; }
+      `}</style>
+    </div>
+  );
+};
+
+export default DailyReport;

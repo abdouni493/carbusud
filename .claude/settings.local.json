@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Admin\\\\Desktop\\\\station\" -Recurse -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Read(//c/Users/Admin/.claude/**)",
+      "Bash(echo \"=== total: $\\(npx tsc --noEmit 2>&1)",
+      "Bash(echo \"errors: $\\(npx tsc --noEmit 2>&1)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Admin\\.claude"
+    ]
+  }
+}
