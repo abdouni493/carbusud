@@ -791,13 +791,15 @@ const Inventory = () => {
                               <Printer className="w-4 h-4" />
                             </button>
                             {/* Delete (only drafts) */}
-                            {inv.status === "En cours" && (
-                              <button title="Supprimer"
-                                onClick={() => { setDeleteTargetId(inv.id); setShowDeleteConfirm(true); }}
-                                className="p-2 rounded-xl text-slate-300 hover:bg-red-50 hover:text-red-600 transition-all">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
+                            <button title={inv.status === "En cours" ? "Supprimer" : "Impossible de supprimer (inventaire validé)"}
+                              onClick={() => { if (inv.status === "En cours") { setDeleteTargetId(inv.id); setShowDeleteConfirm(true); } }}
+                              disabled={inv.status !== "En cours"}
+                              className={cn("p-2 rounded-xl transition-all", 
+                                inv.status === "En cours" 
+                                  ? "text-slate-300 hover:bg-red-50 hover:text-red-600 cursor-pointer" 
+                                  : "text-slate-200 cursor-not-allowed opacity-40")}>
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </td>
                       </motion.tr>
