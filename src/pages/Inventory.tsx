@@ -401,7 +401,7 @@ const ConfirmStep = ({ type, meta, onDraft, onValidate, isLoading }: any) => (
 /* ════════════════════════════════════════
    COMPARISON VIEW
 ════════════════════════════════════════ */
-const ComparisonView = ({ inventory, tanks, pumps, products, onAdjust, onBack, isLoading }: any) => {
+const ComparisonView = ({ inventory, tanks, pumps, products, onAdjust, onBack, isLoading, onDelete }: any) => {
   const fuelTotal = inventory.fuelGaps.reduce((a: number, g: any) => a + Math.abs(g.value), 0);
   const prodTotal = inventory.productGaps.reduce((a: number, g: any) => a + Math.abs(g.value), 0);
 
@@ -422,10 +422,19 @@ const ComparisonView = ({ inventory, tanks, pumps, products, onAdjust, onBack, i
             {inventory.type} • {new Date(inventory.date).toLocaleDateString()} • {inventory.user}
           </p>
         </div>
-        <button onClick={() => window.print()}
-          className="p-3 bg-white border border-slate-100 rounded-2xl hover:border-blue-900/20 transition-all shadow-sm text-slate-400 hover:text-blue-900">
-          <Printer className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => window.print()}
+            className="p-3 bg-white border border-slate-100 rounded-2xl hover:border-blue-900/20 transition-all shadow-sm text-slate-400 hover:text-blue-900">
+            <Printer className="w-5 h-5" />
+          </button>
+          {inventory.status === "En cours" && (
+            <button title="Supprimer"
+              onClick={() => onDelete && onDelete(inventory.id)}
+              className="p-3 bg-white border border-slate-100 rounded-2xl hover:bg-red-50 hover:text-red-600 transition-all text-slate-300">
+              <Trash2 className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-8">
@@ -955,6 +964,13 @@ const Inventory = () => {
                 className="h-12 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest text-blue-900 border-2 border-slate-200 hover:border-blue-900/20 transition-all flex items-center gap-2">
                 <Printer className="w-4 h-4" /> Imprimer
               </button>
+              {selected.status === "En cours" && (
+                <button title="Supprimer"
+                  onClick={() => { setDeleteTargetId(selected.id); setShowDeleteConfirm(true); }}
+                  className="h-12 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest text-red-600 border-2 border-red-100 hover:bg-red-50 transition-all flex items-center gap-2">
+                  <Trash2 className="w-4 h-4" /> Supprimer
+                </button>
+              )}
             </div>
           </motion.div>
         )}
@@ -964,7 +980,8 @@ const Inventory = () => {
           <motion.div key="compare" initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
             <ComparisonView inventory={selected} tanks={tanks} pumps={pumps} products={products}
               onAdjust={() => setShowAdjustConfirm(true)}
-              onBack={() => setView("list")} isLoading={isLoading} />
+              onBack={() => setView("list")} isLoading={isLoading}
+              onDelete={(id: string) => { setDeleteTargetId(id); setShowDeleteConfirm(true); }} />
           </motion.div>
         )}
 

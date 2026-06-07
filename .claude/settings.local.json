@@ -8,7 +8,11 @@
       "Bash(Sort-Object FullName)",
       "Read(//c/Users/Admin/.claude/**)",
       "Bash(echo \"=== total: $\\(npx tsc --noEmit 2>&1)",
-      "Bash(echo \"errors: $\\(npx tsc --noEmit 2>&1)"
+      "Bash(echo \"errors: $\\(npx tsc --noEmit 2>&1)",
+      "Bash(git add *)",
+      "Bash(git commit -m '@ *)",
+      "Bash(git commit --amend -m 'feat: persist decalage history, driver fields, client names + inline client creation' -m '- AppContext: save/reload pompiste_decalage_history on brigade accounting add/update and hydrate into each pompiste \\(fixes decalages lost on reload / MyPayments\\) *)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Admin\\.claude"
