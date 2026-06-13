@@ -106,32 +106,81 @@ export function getDefaultPermissions(
   role: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'
 ): UserPermissions {
   const perms: UserPermissions = {};
+  // Start with everything OFF
   GROUPS.forEach(g => g.modules.forEach(m => { perms[m.id] = { ...emptyPermission }; }));
 
   if (role === 'pompiste') {
-    perms["Ventes Carburant"] = { ...fullPermission };
+    // Dashboard: view only — shows his brigade info + payment info
+    perms["Tableau de bord"] = { ...viewOnlyPermission };
+    // Brigade: view only his own brigade, no modifications
     perms["Ma Brigade"]       = { ...viewOnlyPermission };
-    perms["Mes Paiements"]    = { ...viewOnlyPermission };
-  } else if (role === 'chef_brigade') {
-    perms["Brigades"] = {
-      voir: true, creer: false, modifier: true, supprimer: false,
-      imprimer: true, exporter: false, scanner: false, generer: false,
-    };
-    perms["Dépenses"] = {
-      voir: true, creer: true, modifier: false, supprimer: false,
-      imprimer: false, exporter: false, scanner: false, generer: false,
-    };
+    // Fuel sales: full access (he creates them)
     perms["Ventes Carburant"] = { ...fullPermission };
-    perms["Ma Brigade"]       = { ...viewOnlyPermission };
+    // Shop sales: view only
+    perms["Magasin"]          = { ...viewOnlyPermission };
+    // My payments: view only
     perms["Mes Paiements"]    = { ...viewOnlyPermission };
-  } else if (role === 'gerant') {
-    Object.keys(perms).forEach(k => { perms[k] = { ...viewOnlyPermission }; });
-    perms["Brigades"] = { ...fullPermission };
-    perms["Dépenses"] = { ...fullPermission };
-  } else if (role === 'magasin') {
-    perms["Magasin"]       = { ...fullPermission };
-    perms["Produits"]      = { ...viewOnlyPermission };
-    perms["Mes Paiements"] = { ...viewOnlyPermission };
+    // Profile settings: view + modify own profile
+    perms["Paramètres"]       = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: false, exporter: false, scanner: false, generer: false };
+    // Everything else stays OFF (no Brigades page, no HR, no reports, etc.)
+  }
+
+  else if (role === 'chef_brigade') {
+    // Dashboard: view own brigade info + payment summary
+    perms["Tableau de bord"]  = { ...viewOnlyPermission };
+    // Brigades: see only his own brigades (latest first) — view + modify + print, NO delete, NO accounting button (enforced in Brigades.tsx)
+    perms["Brigades"]         = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: true, exporter: false, scanner: false, generer: false };
+    // Fuel sales: full access
+    perms["Ventes Carburant"] = { ...fullPermission };
+    // My payments: view only
+    perms["Mes Paiements"]    = { ...viewOnlyPermission };
+    // Profile settings: view + modify
+    perms["Paramètres"]       = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: false, exporter: false, scanner: false, generer: false };
+    // Everything else OFF (no comptabilité, no HR, no reports, no stats)
+  }
+
+  else if (role === 'gerant') {
+    // Gérant sees everything EXCEPT reports and statistics
+    GROUPS.forEach(g => g.modules.forEach(m => {
+      perms[m.id] = { ...viewOnlyPermission };
+    }));
+    // Give full access to operational modules
+    perms["Brigades"]          = { ...fullPermission };
+    perms["Ventes Carburant"]  = { ...fullPermission };
+    perms["Magasin"]           = { ...fullPermission };
+    perms["Cuves"]             = { ...viewOnlyPermission };
+    perms["Pompes"]            = { ...viewOnlyPermission };
+    perms["Pistes"]            = { ...viewOnlyPermission };
+    perms["Livraisons"]        = { ...fullPermission };
+    perms["Produits"]          = { ...fullPermission };
+    perms["Achats"]            = { ...fullPermission };
+    perms["Inventaires"]       = { ...fullPermission };
+    perms["Clients"]           = { ...fullPermission };
+    perms["Fournisseurs"]      = { ...fullPermission };
+    perms["Dépenses"]          = { ...fullPermission };
+    perms["Fiche Journalière"] = { ...fullPermission };
+    perms["Mes Paiements"]     = { ...viewOnlyPermission };
+    perms["Paramètres"]        = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: false, exporter: false, scanner: false, generer: false };
+    // BLOCK reports and statistics explicitly
+    perms["Statistiques"]      = { ...emptyPermission };
+    perms["Rapports"]          = { ...emptyPermission };
+    // BLOCK HR management pages
+    perms["Pompistes"]         = { ...emptyPermission };
+    perms["Chefs de Brigade"]  = { ...emptyPermission };
+    perms["Gérants"]           = { ...emptyPermission };
+    perms["Employés Magasin"]  = { ...emptyPermission };
+  }
+
+  else if (role === 'magasin') {
+    // Shop sales: full access
+    perms["Magasin"]        = { ...fullPermission };
+    // Products: view only
+    perms["Produits"]       = { ...viewOnlyPermission };
+    // My payments: view only
+    perms["Mes Paiements"]  = { ...viewOnlyPermission };
+    // Profile settings: view + modify
+    perms["Paramètres"]     = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: false, exporter: false, scanner: false, generer: false };
+    // Everything else OFF
   }
 
   return perms;

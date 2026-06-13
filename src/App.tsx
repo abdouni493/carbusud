@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import Layout from "./components/Layout";
 import { AppProvider, useAppState, useAppDispatch } from "./store/AppContext";
@@ -41,6 +41,93 @@ import MyPayments from "./pages/MyPayments";
 import MySettings from "./pages/MySettings";
 import ChefBrigade from "./pages/ChefBrigade";
 import Planning from "./pages/Planning";
+
+// ─── Route to Module Mapping ───────────────────────────────────────────────────
+/**
+ * Maps route paths to permission module IDs for route-level access control.
+ * Checked before rendering the component to ensure user has "voir" (view) permission.
+ */
+const ROUTE_TO_MODULE: Record<string, string> = {
+  "/brigades":         "Brigades",
+  "/planning":         "Planning",
+  "/fuel-sales":       "Ventes Carburant",
+  "/tanks":            "Cuves",
+  "/pumps":            "Pompes",
+  "/tracks":           "Pistes",
+  "/delivery-notes":   "Livraisons",
+  "/fuel-purchases":   "Achats Carburant",
+  "/products":         "Produits",
+  "/shop-pos":         "Ventes Magasin",
+  "/purchases":        "Achats",
+  "/inventory":        "Inventaires",
+  "/clients":          "Clients",
+  "/suppliers":        "Fournisseurs",
+  "/pompistes":        "Gestion Pompistes",
+  "/brigade-chefs":    "Gestion Chefs Brigade",
+  "/gerants":          "Gestion Gérants",
+  "/magasin-workers":  "Gestion Magasin",
+  "/roles-permissions": "Permissions",
+  "/expenses":         "Dépenses",
+  "/daily-report":     "Rapport Quotidien",
+  "/statistics":       "Statistiques",
+  "/reports":          "Rapports",
+};
+
+// ─── ProtectedRoute Component ─────────────────────────────────────────────────
+/**
+ * Wraps a route component to check if the current user has permission to view it.
+ * For admin users, all routes are allowed. For workers, checks the permission
+ * module mapped to this route and requires the "voir" (view) flag.
+ * 
+ * If permission is denied, redirects to /dashboard with a toast notification.
+ */
+interface ProtectedRouteProps {
+  element: React.ReactElement;
+  moduleId?: string; // Optional override; otherwise auto-maps from current path
+}
+
+function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.ReactElement {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const state = useAppState();
+  const dispatch = useAppDispatch();
+
+  // Resolve moduleId from route path if not provided
+  const resolvedModuleId = moduleId || ROUTE_TO_MODULE[location.pathname];
+
+  // Admin always has access
+  if (state.currentUser?.role === 'admin') {
+    return element;
+  }
+
+  // For workers, check if they have "voir" permission for this module
+  if (state.currentUser?.role !== 'admin' && resolvedModuleId) {
+    const worker = state.pompistes.find(w => w.id === state.currentUser?.id)
+      || state.brigadesChefs.find(w => w.id === state.currentUser?.id)
+      || state.gerants.find(w => w.id === state.currentUser?.id)
+      || state.magasinWorkers.find(w => w.id === state.currentUser?.id);
+
+    if (worker?.permissions?.[resolvedModuleId]?.voir) {
+      return element; // Has view permission
+    }
+
+    // No permission — redirect to dashboard with toast
+    dispatch({
+      type: 'ADD_TOAST',
+      payload: {
+        type: 'error',
+        title: 'Accès refusé',
+        message: `Vous n'avez pas accès au module "${resolvedModuleId}".`,
+        duration: 3,
+      },
+    });
+    navigate('/dashboard', { replace: true });
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // If no permission mapping or not a worker, allow access
+  return element;
+}
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
 const AppLoader = () => (
@@ -197,42 +284,42 @@ function AppRoutes({ onLogout }: { onLogout: () => void }) {
         <Route path="/dashboard"        element={<Dashboard />} />
 
         {/* Operations */}
-        <Route path="/brigades"         element={<Brigades />} />
-        <Route path="/planning"         element={<Planning />} />
-        <Route path="/fuel-sales"       element={<FuelPOS />} />
+        <Route path="/brigades"         element={<ProtectedRoute element={<Brigades />} moduleId="Brigades" />} />
+        <Route path="/planning"         element={<ProtectedRoute element={<Planning />} moduleId="Planning" />} />
+        <Route path="/fuel-sales"       element={<ProtectedRoute element={<FuelPOS />} moduleId="Ventes Carburant" />} />
         <Route path="/pos"              element={<Navigate to="/fuel-sales" replace />} />
 
         {/* Fuel */}
-        <Route path="/tanks"            element={<Tanks />} />
-        <Route path="/pumps"            element={<Pumps />} />
-        <Route path="/tracks"           element={<Tracks />} />
-        <Route path="/delivery-notes"   element={<DeliveryNotes />} />
-        <Route path="/fuel-purchases"   element={<FuelPurchases />} />
+        <Route path="/tanks"            element={<ProtectedRoute element={<Tanks />} moduleId="Cuves" />} />
+        <Route path="/pumps"            element={<ProtectedRoute element={<Pumps />} moduleId="Pompes" />} />
+        <Route path="/tracks"           element={<ProtectedRoute element={<Tracks />} moduleId="Pistes" />} />
+        <Route path="/delivery-notes"   element={<ProtectedRoute element={<DeliveryNotes />} moduleId="Livraisons" />} />
+        <Route path="/fuel-purchases"   element={<ProtectedRoute element={<FuelPurchases />} moduleId="Achats Carburant" />} />
 
         {/* Magasin */}
-        <Route path="/products"         element={<Products />} />
-        <Route path="/shop-pos"         element={<ShopPOS />} />
-        <Route path="/purchases"        element={<Purchases />} />
-        <Route path="/inventory"        element={<Inventory />} />
+        <Route path="/products"         element={<ProtectedRoute element={<Products />} moduleId="Produits" />} />
+        <Route path="/shop-pos"         element={<ProtectedRoute element={<ShopPOS />} moduleId="Ventes Magasin" />} />
+        <Route path="/purchases"        element={<ProtectedRoute element={<Purchases />} moduleId="Achats" />} />
+        <Route path="/inventory"        element={<ProtectedRoute element={<Inventory />} moduleId="Inventaires" />} />
 
         {/* Clients / Suppliers */}
-        <Route path="/clients"          element={<Clients />} />
-        <Route path="/suppliers"        element={<Suppliers />} />
+        <Route path="/clients"          element={<ProtectedRoute element={<Clients />} moduleId="Clients" />} />
+        <Route path="/suppliers"        element={<ProtectedRoute element={<Suppliers />} moduleId="Fournisseurs" />} />
 
         {/* Personnel */}
-        <Route path="/pompistes"        element={<Pompistes />} />
-        <Route path="/brigade-chefs"    element={<BrigadeChefs />} />
-        <Route path="/gerants"          element={<Gerants />} />
-        <Route path="/magasin-workers"  element={<MagasinWorkers />} />
-        <Route path="/roles-permissions" element={<Permissions />} />
+        <Route path="/pompistes"        element={<ProtectedRoute element={<Pompistes />} moduleId="Gestion Pompistes" />} />
+        <Route path="/brigade-chefs"    element={<ProtectedRoute element={<BrigadeChefs />} moduleId="Gestion Chefs Brigade" />} />
+        <Route path="/gerants"          element={<ProtectedRoute element={<Gerants />} moduleId="Gestion Gérants" />} />
+        <Route path="/magasin-workers"  element={<ProtectedRoute element={<MagasinWorkers />} moduleId="Gestion Magasin" />} />
+        <Route path="/roles-permissions" element={<ProtectedRoute element={<Permissions />} moduleId="Permissions" />} />
 
         {/* Finances */}
-        <Route path="/expenses"         element={<Expenses />} />
-        <Route path="/daily-report"     element={<DailyReport />} />
+        <Route path="/expenses"         element={<ProtectedRoute element={<Expenses />} moduleId="Dépenses" />} />
+        <Route path="/daily-report"     element={<ProtectedRoute element={<DailyReport />} moduleId="Rapport Quotidien" />} />
 
         {/* Analytics */}
-        <Route path="/statistics"       element={<Statistics />} />
-        <Route path="/reports"          element={<Reports />} />
+        <Route path="/statistics"       element={<ProtectedRoute element={<Statistics />} moduleId="Statistiques" />} />
+        <Route path="/reports"          element={<ProtectedRoute element={<Reports />} moduleId="Rapports" />} />
 
         {/* Settings & personal */}
         <Route path="/settings"         element={<Settings />} />

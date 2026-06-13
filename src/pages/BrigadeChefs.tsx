@@ -397,7 +397,7 @@ const BrigadeChefs = () => {
         acomptes: [],
         absences: [],
         paymentRecord: [],
-        permissions: (form as any).permissions || getDefaultPermissions('chef_brigade'),
+        permissions: getDefaultPermissions('chef_brigade'),
       };
       dispatch({ type: 'ADD_BRIGADE_CHEF', payload: newChef });
 

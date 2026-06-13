@@ -121,45 +121,49 @@ const POMPISTE_NAV: NavGroup[] = [
   {
     id: "ops", label: "Mon Travail",
     items: [
-      { label: "Ma Brigade",       icon: Target,       path: "/my-brigade", moduleId: "Brigades" },
+      { label: "Ma Brigade",    icon: Target,  path: "/my-brigade",   moduleId: "Ma Brigade" },
+      { label: "Vente Magasin", icon: Store,   path: "/shop-pos",     moduleId: "Magasin" },
     ]
   },
   {
     id: "personal", label: "Personnel",
     items: [
-      { label: "Mes Paiements", icon: Wallet, path: "/my-payments" },
+      { label: "Mes Paiements", icon: Wallet, path: "/my-payments", moduleId: "Mes Paiements" },
     ]
   },
 ];
 
 const CHEF_BRIGADE_NAV: NavGroup[] = [
   {
+    id: "dashboard",
+    items: [{ label: "Tableau de Bord", icon: LayoutDashboard, path: "/dashboard", moduleId: "Tableau de bord" }]
+  },
+  {
     id: "ops", label: "Mon Équipe",
     items: [
-      { label: "Ma Brigade & Gestion", icon: Target,       path: "/chef-brigade" },
-      { label: "Dépenses",              icon: CreditCard,   path: "/expenses" },
+      { label: "Mes Brigades", icon: Target,     path: "/chef-brigade", moduleId: "Brigades" },
     ]
   },
   {
     id: "personal", label: "Personnel",
     items: [
-      { label: "Mes Paiements", icon: Wallet, path: "/my-payments" },
+      { label: "Mes Paiements", icon: Wallet, path: "/my-payments", moduleId: "Mes Paiements" },
     ]
   },
 ];
 
 const MAGASIN_NAV: NavGroup[] = [
   {
-    id: "ops", label: "Magasin",
+    id: "ops", label: "Mon Travail",
     items: [
-      { label: "Vente Magasin", icon: Store,   path: "/shop-pos", moduleId: "Magasin" },
-      { label: "Produits",      icon: Package, path: "/products", moduleId: "Produits" },
+      { label: "Vente Magasin", icon: Store,   path: "/shop-pos",  moduleId: "Magasin" },
+      { label: "Produits",      icon: Package, path: "/products",  moduleId: "Produits" },
     ]
   },
   {
     id: "personal", label: "Personnel",
     items: [
-      { label: "Mes Paiements", icon: Wallet, path: "/my-payments" },
+      { label: "Mes Paiements", icon: Wallet, path: "/my-payments", moduleId: "Mes Paiements" },
     ]
   },
 ];

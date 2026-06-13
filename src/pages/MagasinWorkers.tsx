@@ -176,7 +176,7 @@ const MagasinWorkers = () => {
         paymentRecord: [],
         acomptes: [],
         absences: [],
-        permissions: form.permissions || getDefaultPermissions('magasin'),
+        permissions: getDefaultPermissions('magasin'),
       };
       dispatch({ type: 'ADD_MAGASIN_WORKER', payload: newWorker });
 

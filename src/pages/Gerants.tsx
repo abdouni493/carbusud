@@ -156,7 +156,7 @@ const Gerants = () => {
         paymentRecord: [],
         acomptes: [],
         absences: [],
-        permissions: form.permissions || getDefaultPermissions('gerant'),
+        permissions: getDefaultPermissions('gerant'),
       };
       dispatch({ type: 'ADD_GERANT', payload: newGerant });
 

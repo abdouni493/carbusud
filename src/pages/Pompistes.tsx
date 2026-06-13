@@ -159,7 +159,7 @@ const Pompistes = () => {
         paymentRecord: [],
         acomptes: [],
         absences: [],
-        permissions: form.permissions || getDefaultPermissions('pompiste'),
+        permissions: getDefaultPermissions('pompiste'),
       };
       dispatch({ type: 'ADD_POMPISTE', payload: newPompiste });
 
