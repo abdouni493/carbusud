@@ -151,6 +151,12 @@ export interface BrigadeChef {
   acomptes?: Acompte[];
   absences?: Absence[];
   paymentRecord?: WorkerPaymentRecord[];
+  decalageHistory?: {
+    brigadeId: string;
+    date: string;
+    amount: number;
+    type: 'BONUS' | 'RETENUE';
+  }[];
 }
 
 export interface GerantWorker {
@@ -1028,7 +1034,7 @@ function mapPompiste(r: any): Pompiste {
   return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, trackId: r.track_id, chefId: r.chef_id, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, paymentRecord: [], acomptes: [], absences: [], decalageHistory: [] };
 }
 function mapBrigadeChef(r: any): BrigadeChef {
-  return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, pompisteIds: [], paymentRecord: [], acomptes: [], absences: [] };
+  return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, pompisteIds: [], paymentRecord: [], acomptes: [], absences: [], decalageHistory: [] };
 }
 function mapGerant(r: any): GerantWorker {
   return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, paymentRecord: [], acomptes: [], absences: [] };
@@ -1225,8 +1231,8 @@ async function syncToSupabase(action: AppAction): Promise<void> {
               type: d.money < 0 ? 'BONUS' : 'RETENUE',
             });
           });
-          // Also save rest-assigned worker décalage if present
-          if (a.restAssignedWorkerId && Math.abs(a.restAssignedAmount || 0) > 0.01) {
+          // Also save rest-assigned worker décalage if present (skip chefs — no FK in pompiste_decalage_history)
+          if (a.restAssignedWorkerId && Math.abs(a.restAssignedAmount || 0) > 0.01 && a.restAssignedWorkerType !== 'chef_brigade') {
             decalagePromises.push(
               db.addDecalageHistory({
                 id: newId(),
@@ -1259,7 +1265,7 @@ async function syncToSupabase(action: AppAction): Promise<void> {
               type: d.money < 0 ? 'BONUS' : 'RETENUE',
             });
           });
-          if (a.restAssignedWorkerId && Math.abs(a.restAssignedAmount || 0) > 0.01) {
+          if (a.restAssignedWorkerId && Math.abs(a.restAssignedAmount || 0) > 0.01 && a.restAssignedWorkerType !== 'chef_brigade') {
             decalagePromises.push(
               db.addDecalageHistory({
                 id: newId(),

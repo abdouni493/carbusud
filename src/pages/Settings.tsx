@@ -137,22 +137,39 @@ const Settings = () => {
   };
 
   /**
-   * Parse the import textarea (one "deg<sep>liters" per line, sep = tab | ; | ,),
-   * merge into the current table (dedup by degree, newest wins), sort ascending.
+   * Parse the import textarea (one "deg<sep>liters" per line).
+   * Handles: tab / ; / , as separator, OR whitespace-only separation.
+   * Cleans numbers: strips °, L/l, non-breaking spaces, thousands spaces.
+   * Example: "10°  11 720 L" → deg=10, lit=11720.
    * Does NOT auto-save — operator must click "Enregistrer les modifications".
    */
   const handleImport = () => {
     const lines = importText.split("\n").map(l => l.trim()).filter(Boolean);
     const parsed: { degree: number; liters: number }[] = [];
     let skipped = 0;
+
+    // Strip °, L/l, non-breaking spaces ( ), regular spaces → then normalize comma
+    const cleanNum = (raw: string) =>
+      Number(raw.replace(/[°Ll ]/g, '').replace(/\s/g, '').replace(',', '.'));
+
     lines.forEach(line => {
-      const parts = line.split(/[\t;,]/).map(p => p.trim());
-      if (parts.length < 2) { skipped++; return; }
-      const deg = parseFloat(parts[0]);
-      const lit = parseFloat(parts[1]);
+      // Primary split on tab, semicolon, or comma
+      const sepMatch = line.match(/^([^\t;,]+)[\t;,](.+)$/);
+      let degRaw: string, litRaw: string;
+      if (sepMatch) {
+        [, degRaw, litRaw] = sepMatch;
+      } else {
+        // Fallback: split on first whitespace run (space-separated tables)
+        const wsMatch = line.match(/^(\S+)\s+(.+)$/);
+        if (!wsMatch) { skipped++; return; }
+        [, degRaw, litRaw] = wsMatch;
+      }
+      const deg = cleanNum(degRaw);
+      const lit = cleanNum(litRaw);
       if (!isFinite(deg) || !isFinite(lit) || deg < 0 || lit < 0) { skipped++; return; }
       parsed.push({ degree: deg, liters: lit });
     });
+
     if (skipped > 0) {
       dispatch({ type: "ADD_TOAST", payload: { type: "warning", message: `${skipped} ligne(s) ignorée(s) — format ou valeurs invalides.` } });
     }
@@ -167,7 +184,7 @@ const Settings = () => {
     merged.sort((a, b) => a.degree - b.degree);
     setForm({ ...form, conversionTables: { ...form.conversionTables, [selectedTankTable]: merged } });
     setImportText("");
-    dispatch({ type: "ADD_TOAST", payload: { type: "success", message: `${parsed.length} point(s) importé(s). Cliquez sur "Enregistrer" pour sauvegarder.` } });
+    dispatch({ type: "ADD_TOAST", payload: { type: "success", message: `${parsed.length} point(s) importé(s) · total: ${merged.length} points. Cliquez sur "Enregistrer" pour sauvegarder.` } });
   };
 
   const handleSave = async () => {
@@ -818,13 +835,35 @@ const Settings = () => {
                               value={importText}
                               onChange={e => setImportText(e.target.value)}
                             />
-                            <button
-                              onClick={handleImport}
-                              disabled={!importText.trim()}
-                              className="btn-secondary h-10 px-6 text-[10px] uppercase tracking-widest font-black italic disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              Importer et Fusionner
-                            </button>
+                            <div className="flex flex-wrap gap-3">
+                              <button
+                                onClick={handleImport}
+                                disabled={!importText.trim()}
+                                className="btn-secondary h-10 px-6 text-[10px] uppercase tracking-widest font-black italic disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                Importer et Fusionner
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const pts = [...(form.conversionTables[selectedTankTable] || [])].sort((a, b) => a.degree - b.degree);
+                                  const issues: string[] = [];
+                                  for (let i = 1; i < pts.length; i++) {
+                                    if (pts[i].liters <= pts[i - 1].liters) {
+                                      issues.push(`${pts[i - 1].degree}°→${pts[i].degree}°`);
+                                    }
+                                  }
+                                  if (issues.length === 0) {
+                                    dispatch({ type: "ADD_TOAST", payload: { type: "success", message: "Barème monotone ✓ — aucun problème de croissance détecté." } });
+                                  } else {
+                                    dispatch({ type: "ADD_TOAST", payload: { type: "warning", message: `${issues.length} segment(s) non-croissants: ${issues.slice(0, 4).join(', ')}${issues.length > 4 ? '…' : ''}.` } });
+                                  }
+                                }}
+                                disabled={!form.conversionTables[selectedTankTable]?.length}
+                                className="btn-secondary h-10 px-6 text-[10px] uppercase tracking-widest font-black italic disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                Vérifier la Monotonie
+                              </button>
+                            </div>
                           </div>
 
                           <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest text-center italic">

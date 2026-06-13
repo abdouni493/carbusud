@@ -26,6 +26,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
 import { useAppState, useAppDispatch, MagasinWorker, Track, BrigadeChef } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
+import { getDefaultPermissions } from "../lib/permissionDefaults";
 import { useNavigate } from "react-router-dom";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -173,7 +174,8 @@ const MagasinWorkers = () => {
         username: appUsername || undefined,
         paymentRecord: [],
         acomptes: [],
-        absences: []
+        absences: [],
+        permissions: form.permissions || getDefaultPermissions('magasin'),
       };
       dispatch({ type: 'ADD_MAGASIN_WORKER', payload: newWorker });
 
@@ -190,12 +192,15 @@ const MagasinWorkers = () => {
           if (result.auth_user_id) {
             dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...newWorker, authUserId: result.auth_user_id } });
           }
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé magasin recruté" } });
         } else {
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Employé créé sans compte d'accès: ${(result as {ok:false;error:string}).error}` } });
+          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
+          dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...newWorker, hasAccess: false } });
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
+      } else {
+        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé magasin recruté" } });
       }
-
-      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé magasin recruté" } });
     }
     setShowModal(false);
   };

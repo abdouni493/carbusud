@@ -11,17 +11,13 @@ const SUPABASE_ANON =
   (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ??
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vd3RxbmRydHV5bnR1cnpsa2V3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MjUyOTUsImV4cCI6MjA5NTIwMTI5NX0.IYxKROwsKFblqptoIILag0w09GJGkITFUVyWfUW42uU';
 
+// Vercel: define VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in Project Settings → Environment Variables.
+// Vite bakes these in at BUILD time; the browser cannot read runtime env vars.
 if (!import.meta.env.VITE_SUPABASE_URL) {
-  console.error(
-    '[supabase] VITE_SUPABASE_URL is not defined in .env — using hardcoded fallback. ' +
-    'Add it to .env for production deployments.'
-  );
+  console.warn('[supabase] VITE_SUPABASE_URL not defined — using hardcoded fallback. Add it in Vercel → Environment Variables (must exist at build time).');
 }
 if (!import.meta.env.VITE_SUPABASE_ANON_KEY) {
-  console.error(
-    '[supabase] VITE_SUPABASE_ANON_KEY is not defined in .env — using hardcoded fallback. ' +
-    'Add it to .env for production deployments.'
-  );
+  console.warn('[supabase] VITE_SUPABASE_ANON_KEY not defined — using hardcoded fallback. Add it in Vercel → Environment Variables (must exist at build time).');
 }
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
@@ -96,12 +92,13 @@ export function getPublicUrl(bucket: string, path: string): string {
  * Returns { user, session, role, profile } on success or { error } on failure.
  */
 export async function signIn(identifier: string, password: string) {
-  const id = identifier.trim();
-  // If it already looks like an email, use it as-is; otherwise map to worker convention
-  const email = id.includes('@') ? id : `${id.toLowerCase()}@workers.station.local`;
+  const id = identifier.trim().toLowerCase();
+  // Workers use convention `${username}@workers.station.local`; admins pass full email directly.
+  // toLowerCase() is applied first so it matches exactly what provision_worker_account stores.
+  const email = id.includes('@') ? id : `${id}@workers.station.local`;
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) return { error: error.message };
+  if (error) return { error: 'Identifiant ou mot de passe incorrect' };
 
   // Resolve role via RPC — works for both admin_profiles and worker tables
   const { data: roleRow } = await supabase.rpc('get_my_role');

@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
 import { useAppState, useAppDispatch, GerantWorker, Track, BrigadeChef } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
+import { getDefaultPermissions } from "../lib/permissionDefaults";
 
 // Username must be 3-32 chars: lowercase letters, digits, dot, underscore, hyphen
 const USERNAME_REGEX = /^[a-z0-9._-]{3,32}$/;
@@ -153,7 +154,8 @@ const Gerants = () => {
         id: newId(),
         paymentRecord: [],
         acomptes: [],
-        absences: []
+        absences: [],
+        permissions: form.permissions || getDefaultPermissions('gerant'),
       };
       dispatch({ type: 'ADD_GERANT', payload: newGerant });
 
@@ -170,12 +172,15 @@ const Gerants = () => {
           if (result.auth_user_id) {
             dispatch({ type: 'UPDATE_GERANT', payload: { ...newGerant, authUserId: result.auth_user_id } });
           }
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant recruté" } });
         } else {
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Gérant créé sans compte d'accès: ${(result as {ok:false;error:string}).error}` } });
+          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
+          dispatch({ type: 'UPDATE_GERANT', payload: { ...newGerant, hasAccess: false } });
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
+      } else {
+        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant recruté" } });
       }
-
-      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant recruté" } });
     }
     setShowModal(false);
   };

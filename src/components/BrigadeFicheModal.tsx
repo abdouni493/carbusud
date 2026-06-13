@@ -75,7 +75,7 @@ const BrigadeFicheModal: React.FC<Props> = ({
   const fmt = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+    <div id="fiche-root" className="fixed inset-0 z-[80] flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" />
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
         className="bg-white w-full max-w-4xl rounded-[2rem] shadow-2xl relative z-10 flex flex-col max-h-[95vh] overflow-hidden border border-slate-100">

@@ -301,7 +301,9 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       <p className="text-slate-300 text-sm mt-1">Utilisez le bouton "Comptabilité" depuis la carte brigade</p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-5">
+
+                      {/* ① Synthèse financière */}
                       <div className="grid grid-cols-3 gap-4">
                         {[
                           { label: 'Total Dû', value: `${accounting.totalDue.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: 'text-blue-700' },
@@ -320,6 +322,138 @@ const BrigadeDetailModal: React.FC<Props> = ({
                         </span>
                         {accounting.createdBy && <span className="text-[10px] text-slate-500 font-bold">par {accounting.createdBy}</span>}
                       </div>
+
+                      {/* ② Vérification des cuves */}
+                      {Object.keys(accounting.cuveVerifications || {}).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vérification Cuves</p>
+                          {(Object.entries(accounting.cuveVerifications) as [string, { verified: boolean; corrected: boolean; correctedValue?: number }][]).map(([tankId, ver]) => {
+                            const tank = tanks.find(t => t.id === tankId);
+                            return (
+                              <div key={tankId} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                                <span className={cn("w-2 h-2 rounded-full flex-shrink-0", ver.verified ? "bg-green-500" : "bg-slate-300")} />
+                                <span className="font-black text-slate-700 text-sm flex-1">{tank?.name || tankId}</span>
+                                {ver.corrected && ver.correctedValue !== undefined && (
+                                  <span className="text-[10px] font-black px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">Corrigé → {ver.correctedValue.toLocaleString('fr-FR')} L</span>
+                                )}
+                                <span className={cn("text-[10px] font-black px-2 py-0.5 rounded-full", ver.verified ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500")}>
+                                  {ver.verified ? (ver.corrected ? 'Non conforme' : 'Conforme') : 'Non vérifié'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* ③ Vérification des pistolets */}
+                      {Object.keys(accounting.nozzleVerifications || {}).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vérification Pistolets</p>
+                          {(Object.entries(accounting.nozzleVerifications) as [string, { verified: boolean; corrected: boolean; correctedValue?: number }][]).map(([nozzleId, ver]) => {
+                            const nozzle = pumpNozzles.find(n => n.id === nozzleId);
+                            const pump = pumps.find(p => p.id === nozzle?.pumpId);
+                            return (
+                              <div key={nozzleId} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                                <span className={cn("w-2 h-2 rounded-full flex-shrink-0", ver.verified ? "bg-green-500" : "bg-slate-300")} />
+                                <div className="flex-1">
+                                  <span className="font-black text-slate-700 text-sm">{nozzle?.name || nozzleId}</span>
+                                  <span className="text-[10px] text-slate-400 ml-2">{pump?.name}</span>
+                                </div>
+                                {ver.corrected && ver.correctedValue !== undefined && (
+                                  <span className="text-[10px] font-black px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">Corrigé → {ver.correctedValue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</span>
+                                )}
+                                <span className={cn("text-[10px] font-black px-2 py-0.5 rounded-full", ver.verified ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500")}>
+                                  {ver.verified ? (ver.corrected ? 'Non conforme' : 'Conforme') : 'Non vérifié'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* ④ Comparaison Cuves vs Pistolets */}
+                      {(accounting.tankSummary || []).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Comparaison Cuves / Pistolets</p>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-blue-900 text-white">
+                                <tr>{['Cuve', 'Sortie Cuve', 'Pistolets', 'Écart', 'Valeur'].map(h => (
+                                  <th key={h} className="px-3 py-2 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
+                                ))}</tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {(accounting.tankSummary as any[]).map((ts: any) => {
+                                  const tank = tanks.find(t => t.id === ts.tankId);
+                                  return (
+                                    <tr key={ts.tankId} className={cn("hover:bg-slate-50", Math.abs(ts.ecart) < 2 ? "" : "bg-red-50/30")}>
+                                      <td className="px-3 py-2 font-black text-slate-800">{tank?.name || ts.tankId}</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{(ts.diff || 0).toFixed(1)} L</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{((ts.diff || 0) - (ts.ecart || 0)).toFixed(1)} L</td>
+                                      <td className={cn("px-3 py-2 font-black", Math.abs(ts.ecart) < 2 ? "text-green-700" : "text-red-700")}>{(ts.ecart || 0) > 0 ? '+' : ''}{(ts.ecart || 0).toFixed(1)} L</td>
+                                      <td className={cn("px-3 py-2 font-black text-sm", (ts.ecartMoney || 0) > 0 ? "text-amber-700" : "text-green-700")}>{(ts.ecartMoney || 0).toFixed(0)} MAD</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ⑤ Décalage par agent */}
+                      {Object.keys(accounting.decalageSummary || {}).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Décalage par Agent</p>
+                          {Object.entries(accounting.decalageSummary).map(([workerId, d]: [string, any]) => {
+                            const pompiste = pompistes.find(p => p.id === workerId);
+                            return (
+                              <div key={workerId} className={cn("flex items-center gap-3 p-3 rounded-xl border", d.money < 0 ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100")}>
+                                <div className="w-8 h-8 bg-blue-700 text-white rounded-lg flex items-center justify-center font-black text-xs">{pompiste?.name[0] || '?'}</div>
+                                <div className="flex-1">
+                                  <p className="font-black text-slate-800 text-sm">{pompiste?.name || workerId}</p>
+                                  <p className="text-[10px] text-slate-500">{d.liters?.toFixed(2)} L</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className={cn("font-black text-sm", d.money < 0 ? "text-red-700" : "text-amber-700")}>{d.money > 0 ? '+' : ''}{d.money?.toFixed(0)} MAD</p>
+                                  <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full", d.money < 0 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700")}>
+                                    {d.money < 0 ? 'BONUS' : 'RETENUE'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* ⑥ Reste affecté */}
+                      {accounting.restAssignedWorkerId && Math.abs(accounting.restAssignedAmount || 0) > 0.01 && (
+                        <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
+                          <p className="text-[10px] font-black text-amber-900 uppercase tracking-widest mb-2">Reste Affecté</p>
+                          {(() => {
+                            const isChef = accounting.restAssignedWorkerType === 'chef_brigade';
+                            const worker = isChef
+                              ? brigadeChefs.find(c => c.id === accounting.restAssignedWorkerId)
+                              : pompistes.find(p => p.id === accounting.restAssignedWorkerId);
+                            return (
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="font-black text-slate-800">{worker?.name || accounting.restAssignedWorkerId}</p>
+                                  <span className="text-[9px] font-black px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full">{isChef ? 'Chef de Brigade' : 'Pompiste'}</span>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-black text-amber-800">{(accounting.restAssignedAmount || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</p>
+                                  <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full", (accounting.rest || 0) < 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
+                                    {(accounting.rest || 0) < 0 ? 'BONUS' : 'RETENUE'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      {/* ⑦ Justifications Clients */}
                       {(accounting.justifications || []).length > 0 && (
                         <div className="space-y-2">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justifications Clients</p>
@@ -341,6 +475,7 @@ const BrigadeDetailModal: React.FC<Props> = ({
                           })}
                         </div>
                       )}
+
                     </div>
                   )}
                 </motion.div>

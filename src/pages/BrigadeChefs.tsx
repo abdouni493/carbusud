@@ -47,6 +47,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
 import { useAppState, useAppDispatch, BrigadeChef, Pompiste, Brigade } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
+import { getDefaultPermissions } from "../lib/permissionDefaults";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
 import PermissionsModal from "../components/PermissionsModal";
@@ -394,7 +395,8 @@ const BrigadeChefs = () => {
         id: newId(),
         acomptes: [],
         absences: [],
-        paymentRecord: []
+        paymentRecord: [],
+        permissions: (form as any).permissions || getDefaultPermissions('chef_brigade'),
       };
       dispatch({ type: 'ADD_BRIGADE_CHEF', payload: newChef });
 
@@ -411,12 +413,15 @@ const BrigadeChefs = () => {
           if (result.auth_user_id) {
             dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...newChef, authUserId: result.auth_user_id } });
           }
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade recruté" } });
         } else {
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Chef créé sans compte d'accès: ${(result as {ok:false;error:string}).error}` } });
+          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
+          dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...newChef, hasAccess: false } });
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
+      } else {
+        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade recruté" } });
       }
-
-      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade recruté" } });
     }
     setShowModal(false);
     resetForm();

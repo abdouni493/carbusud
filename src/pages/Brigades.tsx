@@ -427,8 +427,8 @@ const Brigades = () => {
         )}
       </div>
 
-      {/* Vue Gérant - Affiche toutes les brigades */}
-      {currentUserRole === 'gerant' && (() => {
+      {/* Vue Gérant — désactivée, gérée par le bloc unifié ci-dessous */}
+      {false && (() => {
         const filteredBrigades = [...brigades].reverse().filter(b => {
           if (searchId && !b.id.toLowerCase().includes(searchId.toLowerCase())) return false;
           if (filterChef && b.chefId !== filterChef) return false;
@@ -576,8 +576,8 @@ const Brigades = () => {
         );
       })()}
 
-      {/* Vue Admin/Chef Brigade — Grille de Cards */}
-      {(currentUserRole === 'admin' || currentUserRole === 'chef_brigade') && (() => {
+      {/* Grille de Brigades — toutes les rôles */}
+      {(() => {
         const filteredBrigades = [...brigades].reverse().filter(b => {
           if (searchId && !b.id.toLowerCase().includes(searchId.toLowerCase())) return false;
           if (filterChef && b.chefId !== filterChef) return false;
@@ -673,21 +673,23 @@ const Brigades = () => {
                                   className="absolute right-0 mt-2 w-52 bg-white border border-slate-100 rounded-xl shadow-lg z-50 overflow-hidden"
                                 >
                                   <div className="divide-y divide-slate-100">
-                                    <button
-                                      onClick={() => {
-                                        setEditingBrigade(b);
-                                        setChefId(b.chefId);
-                                        setShiftType(b.shift as 'Matin' | 'Soir' | 'Nuit');
-                                        setShiftDate(b.date);
-                                        setStartTime(b.startTime);
-                                        setEndTime(b.endTime);
-                                        setShowEditModal(true);
-                                        setActionMenuOpen(null);
-                                      }}
-                                      className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-                                    >
-                                      <Pencil className="w-4 h-4" /> Modifier
-                                    </button>
+                                    {currentUserRole !== 'gerant' && (
+                                      <button
+                                        onClick={() => {
+                                          setEditingBrigade(b);
+                                          setChefId(b.chefId);
+                                          setShiftType(b.shift as 'Matin' | 'Soir' | 'Nuit');
+                                          setShiftDate(b.date);
+                                          setStartTime(b.startTime);
+                                          setEndTime(b.endTime);
+                                          setShowEditModal(true);
+                                          setActionMenuOpen(null);
+                                        }}
+                                        className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+                                      >
+                                        <Pencil className="w-4 h-4" /> Modifier
+                                      </button>
+                                    )}
 
                                     <button
                                       onClick={() => { setSelectedBrigade(b); setShowDetail(true); setDetailTab('info'); setActionMenuOpen(null); }}
@@ -696,12 +698,18 @@ const Brigades = () => {
                                       <EyeIcon className="w-4 h-4" /> Voir Détails
                                     </button>
 
-                                    {(b.status === 'Planifiée' || b.status === 'Fermée' || b.status === 'En attente' || (b.status === 'Clôturée' && b.canReactivate)) && (
+                                    <button
+                                      onClick={() => { setSelectedBrigade(b); setShowHistoryModal(true); setActionMenuOpen(null); }}
+                                      className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+                                    >
+                                      <History className="w-4 h-4" /> Historique
+                                    </button>
+
+                                    {currentUserRole !== 'gerant' && (b.status === 'Planifiée' || (b.status === 'Clôturée' && b.canReactivate)) && (
                                       <button
                                         onClick={() => {
                                           setSelectedBrigade(b);
                                           setActivateIndices(b.startIndices || {});
-                                          // Pre-select all nozzles as active and pre-fill their start indices
                                           const brigadeTrackIds = (b.pompisteAssignments || []).filter(a => a.present).map(a => a.trackId);
                                           const displayPumps = brigadeTrackIds.length > 0
                                             ? pumps.filter(p => brigadeTrackIds.includes(p.trackId))
@@ -721,7 +729,7 @@ const Brigades = () => {
                                       </button>
                                     )}
 
-                                    {b.status === 'Ouverte' && (
+                                    {currentUserRole !== 'gerant' && b.status === 'Ouverte' && (
                                       <button
                                         onClick={() => {
                                           setSelectedBrigade(b);
@@ -751,12 +759,14 @@ const Brigades = () => {
                                       <FileText className="w-4 h-4" /> Fiche
                                     </button>
 
-                                    <button
-                                      onClick={() => { setSelectedBrigade(b); setShowConfirmDelete(true); setActionMenuOpen(null); }}
-                                      className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
-                                    >
-                                      <Trash2 className="w-4 h-4" /> Supprimer
-                                    </button>
+                                    {currentUserRole !== 'gerant' && (
+                                      <button
+                                        onClick={() => { setSelectedBrigade(b); setShowConfirmDelete(true); setActionMenuOpen(null); }}
+                                        className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
+                                      >
+                                        <Trash2 className="w-4 h-4" /> Supprimer
+                                      </button>
+                                    )}
                                   </div>
                                 </motion.div>
                               )}
@@ -864,8 +874,7 @@ const Brigades = () => {
                 icon={Users}
                 title="Aucune brigade"
                 description="L'historique est vide pour le moment"
-                actionLabel="Ouvrir Brigade"
-                action={() => { setStep(1); setShowModal(true); }}
+                {...(currentUserRole !== 'gerant' ? { actionLabel: "Ouvrir Brigade", action: () => { setStep(1); setShowModal(true); } } : {})}
               />
             </div>
           )}
@@ -1286,8 +1295,8 @@ const Brigades = () => {
                         <div className="p-4 bg-amber-50 rounded-2xl border-2 border-amber-200 mt-2">
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-xs font-black text-amber-900">Réactivation possible</p>
-                              <p className="text-[10px] text-amber-700">Si activé, cette brigade peut être réactivée après clôture</p>
+                              <p className="text-xs font-black text-amber-900">Autoriser la réactivation après clôture</p>
+                              <p className="text-[10px] text-amber-700">Permettre d'activer à nouveau cette brigade une fois clôturée</p>
                             </div>
                             <button type="button" onClick={() => setCanReactivate(v => !v)}
                               className={cn("w-12 h-6 rounded-full transition-colors relative flex-shrink-0", canReactivate ? "bg-amber-500" : "bg-slate-300")}>

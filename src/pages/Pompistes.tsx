@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
 import { useAppState, useAppDispatch, Pompiste, Track, BrigadeChef } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
+import { getDefaultPermissions } from "../lib/permissionDefaults";
 import { useNavigate } from "react-router-dom";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -156,7 +157,8 @@ const Pompistes = () => {
         id: newId(),
         paymentRecord: [],
         acomptes: [],
-        absences: []
+        absences: [],
+        permissions: form.permissions || getDefaultPermissions('pompiste'),
       };
       dispatch({ type: 'ADD_POMPISTE', payload: newPompiste });
 
@@ -174,12 +176,15 @@ const Pompistes = () => {
           if (result.auth_user_id) {
             dispatch({ type: 'UPDATE_POMPISTE', payload: { ...newPompiste, authUserId: result.auth_user_id } });
           }
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste recruté" } });
         } else {
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Pompiste créé sans compte d'accès: ${(result as {ok:false;error:string}).error}` } });
+          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
+          dispatch({ type: 'UPDATE_POMPISTE', payload: { ...newPompiste, hasAccess: false } });
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
+      } else {
+        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste recruté" } });
       }
-
-      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste recruté" } });
     }
     setShowModal(false);
   };

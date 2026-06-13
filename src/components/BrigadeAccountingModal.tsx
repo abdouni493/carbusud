@@ -213,7 +213,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
     const action = existingAccounting ? 'UPDATE_BRIGADE_ACCOUNTING' : 'ADD_BRIGADE_ACCOUNTING';
     dispatch({ type: action, payload: accounting });
 
-    // Apply client debt/advance changes
+    // Apply client debt/advance changes + record transaction history
     justifications.forEach(j => {
       const client = clients.find(c => c.id === j.clientId);
       if (!client) return;
@@ -222,6 +222,17 @@ const BrigadeAccountingModal: React.FC<Props> = ({
       } else if (client.paymentMode === 'ADVANCE') {
         dispatch({ type: 'UPDATE_CLIENT', payload: { ...client, advanceBalance: Math.max(0, (client.advanceBalance || 0) - j.amount) } });
       }
+      dispatch({ type: 'ADD_CLIENT_PAYMENT', payload: {
+        clientId: client.id,
+        payment: {
+          id: newId(),
+          date: brigade.date,
+          type: 'SALE',
+          amount: j.amount,
+          mode: client.paymentMode,
+          notes: `Brigade ${brigade.date} ${brigade.shift}`,
+        }
+      }});
     });
 
     // Apply cuve corrections to brigade + tanks
@@ -248,19 +259,19 @@ const BrigadeAccountingModal: React.FC<Props> = ({
       dispatch({ type: 'UPDATE_BRIGADE', payload: { ...brigade, endNozzleIndices: newEndNozzleIndices } });
     }
 
-    // Assign rest décalage
+    // Assign rest décalage to the selected agent (pompiste or chef)
     if (restAssignedWorkerId && Math.abs(reste) > 0.01) {
-      const pompiste = pompistes.find(p => p.id === restAssignedWorkerId);
-      if (pompiste) {
-        dispatch({ type: 'UPDATE_POMPISTE', payload: {
-          ...pompiste,
-          decalageHistory: [...(pompiste.decalageHistory || []), {
-            brigadeId: brigade.id,
-            date: brigade.date,
-            amount: Math.abs(reste),
-            type: reste < 0 ? 'BONUS' : 'RETENUE',
-          }]
-        }});
+      const entry = { brigadeId: brigade.id, date: brigade.date, amount: Math.abs(reste), type: (reste < 0 ? 'BONUS' : 'RETENUE') as 'BONUS' | 'RETENUE' };
+      if (restAssignedWorkerType === 'chef_brigade') {
+        const targetChef = brigadeChefs.find(c => c.id === restAssignedWorkerId);
+        if (targetChef) {
+          dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...targetChef, decalageHistory: [...(targetChef.decalageHistory || []), entry] } });
+        }
+      } else {
+        const pompiste = pompistes.find(p => p.id === restAssignedWorkerId);
+        if (pompiste) {
+          dispatch({ type: 'UPDATE_POMPISTE', payload: { ...pompiste, decalageHistory: [...(pompiste.decalageHistory || []), entry] } });
+        }
       }
     }
 
@@ -498,6 +509,29 @@ const BrigadeAccountingModal: React.FC<Props> = ({
             {step === 4 && (
               <motion.div key="s4" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="p-6 space-y-6">
 
+                {/* Quick synthesis from previous steps */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 text-center">
+                    <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mb-1">Cuves vérifiées</p>
+                    <p className="text-xl font-black text-blue-900">{(Object.values(cuveVer) as VerEntry[]).filter(v => v.verified).length}/{tankComparison.length}</p>
+                    <p className="text-[10px] text-blue-400">{(Object.values(cuveVer) as VerEntry[]).filter(v => v.corrected).length} correction(s)</p>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100 text-center">
+                    <p className="text-[9px] font-black text-purple-600 uppercase tracking-widest mb-1">Pistolets vérifiés</p>
+                    <p className="text-xl font-black text-purple-900">{(Object.values(nozzleVer) as VerEntry[]).filter(v => v.verified).length}/{activeNozzles.length}</p>
+                    <p className="text-[10px] text-purple-400">{nozzleData.reduce((s, d) => s + d.liters, 0).toFixed(1)} L vendus</p>
+                  </div>
+                  <div className={cn("p-4 rounded-2xl border text-center", Object.keys(decalageByPompiste).length > 0 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-100")}>
+                    <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: Object.keys(decalageByPompiste).length > 0 ? '#92400e' : '#166534' }}>Décalages</p>
+                    <p className="text-xl font-black" style={{ color: Object.keys(decalageByPompiste).length > 0 ? '#b45309' : '#15803d' }}>
+                      {Object.keys(decalageByPompiste).length} agent(s)
+                    </p>
+                    <p className="text-[10px]" style={{ color: Object.keys(decalageByPompiste).length > 0 ? '#d97706' : '#16a34a' }}>
+                      {(Object.values(decalageByPompiste) as DecalageEntry[]).reduce((s, d) => s + d.money, 0).toFixed(0)} MAD
+                    </p>
+                  </div>
+                </div>
+
                 {/* Total due banner */}
                 <div className="p-6 bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 rounded-2xl text-center">
                   <p className="text-[10px] font-black text-blue-200 uppercase tracking-widest mb-2">Montant Total Dû</p>
@@ -621,7 +655,13 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                 {Math.abs(reste) > 0.01 && (
                   <div className="p-4 bg-amber-50 rounded-2xl border-2 border-amber-200 space-y-3">
                     <p className="text-[10px] font-black text-amber-900 uppercase tracking-widest">Affecter le décalage à un agent</p>
-                    <select value={restAssignedWorkerId} onChange={e => setRestAssignedWorkerId(e.target.value)}
+                    <select value={restAssignedWorkerId} onChange={e => {
+                        const id = e.target.value;
+                        setRestAssignedWorkerId(id);
+                        if (!id) setRestAssignedWorkerType('');
+                        else if (chef && id === chef.id) setRestAssignedWorkerType('chef_brigade');
+                        else setRestAssignedWorkerType('pompiste');
+                      }}
                       className="w-full px-3 py-2.5 border border-amber-300 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 bg-white">
                       <option value="">— Sélectionner un agent —</option>
                       <optgroup label="Pompistes">

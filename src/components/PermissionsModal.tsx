@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from "react";
-import { 
-  X, Target, Fuel, Store, Gauge, Wrench, Map, ClipboardList, 
-  Package, ShoppingCart, Archive, Users, Truck, UsersRound, LayoutDashboard, Calendar, Settings,
-  UserCog, Building2, CreditCard, FileText, BarChart2, Receipt, 
-  Shield, Wallet, ShieldAlert
-} from "lucide-react";
+import { X, Shield, ShieldAlert } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import { UserPermissions, UserPermission } from "../store/AppContext";
+import {
+  GROUPS,
+  emptyPermission,
+  fullPermission,
+  viewOnlyPermission,
+  getDefaultPermissions,
+} from "../lib/permissionDefaults";
 
 interface PermissionsModalProps {
   isOpen: boolean;
@@ -17,118 +19,6 @@ interface PermissionsModalProps {
   currentPermissions: UserPermissions;
   onSave: (permissions: UserPermissions) => void;
 }
-
-interface ModuleDef {
-  id: string;
-  label: string;
-  icon: React.ElementType;
-}
-
-interface GroupDef {
-  title: string;
-  modules: ModuleDef[];
-}
-
-const GROUPS: GroupDef[] = [
-  {
-    title: "Général",
-    modules: [
-      { id: "Tableau de bord", label: "Dashboard", icon: LayoutDashboard }
-    ]
-  },
-  {
-    title: "Opérations",
-    modules: [
-      { id: "Brigades", label: "Brigades", icon: Target },
-      { id: "Ma Brigade", label: "Ma Brigade", icon: Target },
-      { id: "Planning", label: "Planning", icon: Calendar },
-      { id: "Ventes Carburant", label: "Ventes Carburant", icon: Fuel },
-      { id: "Magasin", label: "Vente Magasin", icon: Store }
-    ]
-  },
-  {
-    title: "Carburant",
-    modules: [
-      { id: "Cuves", label: "Cuves", icon: Gauge },
-      { id: "Pompes", label: "Pompes", icon: Wrench },
-      { id: "Pistes", label: "Pistes", icon: Map },
-      { id: "Livraisons", label: "Livraisons", icon: ClipboardList }
-    ]
-  },
-  {
-    title: "Magasin",
-    modules: [
-      { id: "Produits", label: "Produits", icon: Package },
-      { id: "Achats", label: "Achats", icon: ShoppingCart },
-      { id: "Inventaires", label: "Inventaire", icon: Archive }
-    ]
-  },
-  {
-    title: "Contacts",
-    modules: [
-      { id: "Clients", label: "Clients", icon: Users },
-      { id: "Fournisseurs", label: "Fournisseurs", icon: Truck }
-    ]
-  },
-  {
-    title: "Personnel",
-    modules: [
-      { id: "Pompistes", label: "Pompistes", icon: UsersRound },
-      { id: "Chefs de Brigade", label: "Chefs de Brigade", icon: UserCog },
-      { id: "Gérants", label: "Gérants", icon: Building2 },
-      { id: "Employés Magasin", label: "Employés Magasin", icon: Store },
-      { id: "Mes Paiements", label: "Mes Paiements", icon: Wallet }
-    ]
-  },
-  {
-    title: "Finances",
-    modules: [
-      { id: "Dépenses", label: "Dépenses", icon: CreditCard },
-      { id: "Fiche Journalière", label: "Fiche Journalière", icon: FileText }
-    ]
-  },
-  {
-    title: "Analytique & Paramètres",
-    modules: [
-      { id: "Statistiques", label: "Statistiques", icon: BarChart2 },
-      { id: "Rapports", label: "Rapports", icon: Receipt },
-      { id: "Paramètres", label: "Paramètres", icon: Settings }
-    ]
-  }
-];
-
-const emptyPermission: UserPermission = {
-  voir: false,
-  creer: false,
-  modifier: false,
-  supprimer: false,
-  imprimer: false,
-  exporter: false,
-  scanner: false,
-  generer: false
-};
-
-const fullPermission: UserPermission = {
-  voir: true,
-  creer: true,
-  modifier: true,
-  supprimer: true,
-  imprimer: true,
-  exporter: true,
-  scanner: true,
-  generer: true
-};
-
-const viewOnlyPermission: UserPermission = {
-  voir: true,
-  creer: false,
-  modifier: false,
-  supprimer: false,
-  imprimer: false,
-  exporter: false,
-  scanner: false,
-  generer: false
-};
 
 const PermissionsModal: React.FC<PermissionsModalProps> = ({
   isOpen,
@@ -140,30 +30,37 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
 }) => {
   const [permissions, setPermissions] = useState<UserPermissions>({});
 
-  // Initialize permissions when modal opens
+  // Initialize only when modal opens (not on every parent re-render).
+  // This prevents realtime updates from overwriting in-progress changes.
   useEffect(() => {
-    if (isOpen) {
-      // Ensure all modules are initialized
+    if (!isOpen) return;
+    const hasExisting = currentPermissions && Object.keys(currentPermissions).length > 0;
+    if (hasExisting) {
+      // Merge saved permissions with the full module skeleton
       const initial: UserPermissions = {};
       GROUPS.forEach(g => {
         g.modules.forEach(m => {
-          initial[m.id] = currentPermissions?.[m.id] || { ...emptyPermission };
+          initial[m.id] = currentPermissions[m.id]
+            ? { ...currentPermissions[m.id] }
+            : { ...emptyPermission };
         });
       });
       setPermissions(initial);
+    } else {
+      // No saved permissions yet — apply the role's default template
+      setPermissions(getDefaultPermissions(workerRole));
     }
-  }, [isOpen, currentPermissions]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  // Toggle a single permission
   const handleToggle = (moduleId: string, action: keyof UserPermission) => {
     setPermissions(prev => {
       const modulePerm = prev[moduleId] ? { ...prev[moduleId] } : { ...emptyPermission };
       const nextVal = !modulePerm[action];
       modulePerm[action] = nextVal;
 
-      // Rule: If "voir" is turned off, disable all other toggles
       if (action === "voir" && !nextVal) {
         modulePerm.creer = false;
         modulePerm.modifier = false;
@@ -173,64 +70,27 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
         modulePerm.scanner = false;
         modulePerm.generer = false;
       }
-      
-      // Rule: If any action is turned on, automatically turn on "voir"
       if (action !== "voir" && nextVal) {
         modulePerm.voir = true;
       }
 
-      return {
-        ...prev,
-        [moduleId]: modulePerm
-      };
+      return { ...prev, [moduleId]: modulePerm };
     });
   };
 
-  // Templates implementation
   const applyTemplate = (type: 'pompiste' | 'chef' | 'gerant' | 'magasin' | 'all' | 'none') => {
-    const nextPerms: UserPermissions = {};
-    
-    // Set all to false first
-    GROUPS.forEach(g => {
-      g.modules.forEach(m => {
-        nextPerms[m.id] = { ...emptyPermission };
-      });
-    });
-
     if (type === 'all') {
-      Object.keys(nextPerms).forEach(k => {
-        nextPerms[k] = { ...fullPermission };
-      });
-    } else if (type === 'pompiste') {
-      nextPerms["Ventes Carburant"] = { ...fullPermission };
-      nextPerms["Ma Brigade"] = { ...viewOnlyPermission };
-      nextPerms["Mes Paiements"] = { ...viewOnlyPermission };
-    } else if (type === 'chef') {
-      nextPerms["Brigades"] = { 
-        voir: true, creer: false, modifier: true, supprimer: false, 
-        imprimer: true, exporter: false, scanner: false, generer: false 
-      };
-      nextPerms["Dépenses"] = { 
-        voir: true, creer: true, modifier: false, supprimer: false, 
-        imprimer: false, exporter: false, scanner: false, generer: false 
-      };
-      nextPerms["Ventes Carburant"] = { ...fullPermission };
-      nextPerms["Ma Brigade"] = { ...viewOnlyPermission };
-      nextPerms["Mes Paiements"] = { ...viewOnlyPermission };
-    } else if (type === 'gerant') {
-      // Almost all in view-only, except Brigades (all) and Expenses (all)
-      Object.keys(nextPerms).forEach(k => {
-        nextPerms[k] = { ...viewOnlyPermission };
-      });
-      nextPerms["Brigades"] = { ...fullPermission };
-      nextPerms["Dépenses"] = { ...fullPermission };
-    } else if (type === 'magasin') {
-      nextPerms["Magasin"] = { ...fullPermission };
-      nextPerms["Produits"] = { ...viewOnlyPermission };
-      nextPerms["Mes Paiements"] = { ...viewOnlyPermission };
+      const next: UserPermissions = {};
+      GROUPS.forEach(g => g.modules.forEach(m => { next[m.id] = { ...fullPermission }; }));
+      setPermissions(next);
+    } else if (type === 'none') {
+      const next: UserPermissions = {};
+      GROUPS.forEach(g => g.modules.forEach(m => { next[m.id] = { ...emptyPermission }; }));
+      setPermissions(next);
+    } else {
+      const roleMap = { pompiste: 'pompiste', chef: 'chef_brigade', gerant: 'gerant', magasin: 'magasin' } as const;
+      setPermissions(getDefaultPermissions(roleMap[type]));
     }
-
-    setPermissions(nextPerms);
   };
 
   const handleSaveClick = () => {
@@ -240,37 +100,42 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
 
   const getRoleLabelAndBadge = () => {
     switch (workerRole) {
-      case 'pompiste':
-        return { label: "Pompiste", style: "bg-emerald-100 text-emerald-700" };
-      case 'chef_brigade':
-        return { label: "Chef Brigade", style: "bg-purple-100 text-purple-700" };
-      case 'gerant':
-        return { label: "Gérant", style: "bg-blue-100 text-blue-700" };
-      case 'magasin':
-        return { label: "Employé Magasin", style: "bg-pink-100 text-pink-700" };
-      default:
-        return { label: workerRole, style: "bg-slate-100 text-slate-700" };
+      case 'pompiste':     return { label: "Pompiste",       style: "bg-emerald-100 text-emerald-700" };
+      case 'chef_brigade': return { label: "Chef Brigade",   style: "bg-purple-100 text-purple-700" };
+      case 'gerant':       return { label: "Gérant",         style: "bg-blue-100 text-blue-700" };
+      case 'magasin':      return { label: "Employé Magasin",style: "bg-pink-100 text-pink-700" };
+      default:             return { label: workerRole,       style: "bg-slate-100 text-slate-700" };
     }
   };
 
   const roleInfo = getRoleLabelAndBadge();
 
+  // All 8 permission actions with their display labels
+  const ACTIONS = [
+    { action: 'creer'    as const, label: 'Créer'    },
+    { action: 'modifier' as const, label: 'Modifier' },
+    { action: 'supprimer'as const, label: 'Suppr.'   },
+    { action: 'voir'     as const, label: 'Voir'     },
+    { action: 'imprimer' as const, label: 'Imprimer' },
+    { action: 'exporter' as const, label: 'Exporter' },
+    { action: 'scanner'  as const, label: 'Scanner'  },
+    { action: 'generer'  as const, label: 'Générer'  },
+  ];
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 italic text-left">
-      {/* Backdrop */}
-      <motion.div 
-        initial={{ opacity: 0 }} 
-        animate={{ opacity: 1 }} 
-        exit={{ opacity: 0 }} 
-        onClick={onClose} 
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" 
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
       />
 
-      {/* Modal Card */}
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }} 
-        animate={{ opacity: 1, scale: 1 }} 
-        exit={{ opacity: 0, scale: 0.95 }} 
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
         className="bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col h-[90vh] border border-slate-100"
       >
         {/* Header */}
@@ -304,41 +169,23 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
               <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Modèles de Configuration Rapide
             </h4>
             <div className="flex flex-wrap gap-2.5">
-              <button 
-                onClick={() => applyTemplate('pompiste')}
-                className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/30 transition-all shadow-sm"
-              >
+              <button onClick={() => applyTemplate('pompiste')} className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50/30 transition-all shadow-sm">
                 Template Pompiste
               </button>
-              <button 
-                onClick={() => applyTemplate('chef')}
-                className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-purple-500 hover:text-purple-600 hover:bg-purple-50/30 transition-all shadow-sm"
-              >
+              <button onClick={() => applyTemplate('chef')} className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-purple-500 hover:text-purple-600 hover:bg-purple-50/30 transition-all shadow-sm">
                 Template Chef Brigade
               </button>
-              <button 
-                onClick={() => applyTemplate('gerant')}
-                className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50/30 transition-all shadow-sm"
-              >
+              <button onClick={() => applyTemplate('gerant')} className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50/30 transition-all shadow-sm">
                 Template Gérant
               </button>
-              <button 
-                onClick={() => applyTemplate('magasin')}
-                className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-pink-500 hover:text-pink-600 hover:bg-pink-50/30 transition-all shadow-sm"
-              >
+              <button onClick={() => applyTemplate('magasin')} className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 hover:border-pink-500 hover:text-pink-600 hover:bg-pink-50/30 transition-all shadow-sm">
                 Template Employé Magasin
               </button>
               <div className="w-[1px] h-8 bg-slate-200 self-center hidden sm:block" />
-              <button 
-                onClick={() => applyTemplate('all')}
-                className="px-4 py-2 bg-gradient-to-r from-blue-900 to-blue-800 text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-wider hover:scale-105 transition-all shadow-md shadow-blue-900/10"
-              >
+              <button onClick={() => applyTemplate('all')} className="px-4 py-2 bg-gradient-to-r from-blue-900 to-blue-800 text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-wider hover:scale-105 transition-all shadow-md shadow-blue-900/10">
                 Tout Activer
               </button>
-              <button 
-                onClick={() => applyTemplate('none')}
-                className="px-4 py-2 bg-red-50 text-red-600 border border-red-100 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-red-100 transition-all hover:scale-105"
-              >
+              <button onClick={() => applyTemplate('none')} className="px-4 py-2 bg-red-50 text-red-600 border border-red-100 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-red-100 transition-all hover:scale-105">
                 Tout Désactiver
               </button>
             </div>
@@ -346,13 +193,12 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
 
           {/* Modules Grid */}
           <div className="space-y-6">
-            <div className="grid grid-cols-6 gap-4 px-4 pb-2 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:grid shrink-0">
-              <div className="col-span-1">Module</div>
-              <div className="text-center">Créer</div>
-              <div className="text-center">Modifier</div>
-              <div className="text-center">Supprimer</div>
-              <div className="text-center">Voir Détails</div>
-              <div className="text-center">Imprimer</div>
+            {/* Desktop header — 10 cols: 2 for module + 8 for actions */}
+            <div className="grid grid-cols-10 gap-2 px-4 pb-2 border-b border-slate-100 text-[9px] font-black text-slate-400 uppercase tracking-widest hidden md:grid shrink-0">
+              <div className="col-span-2">Module</div>
+              {ACTIONS.map(({ action, label }) => (
+                <div key={action} className="text-center">{label}</div>
+              ))}
             </div>
 
             <div className="space-y-8">
@@ -367,36 +213,29 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
                       const IconComponent = mod.icon;
 
                       return (
-                        <div 
-                          key={mod.id} 
+                        <div
+                          key={mod.id}
                           className={cn(
-                            "grid grid-cols-1 md:grid-cols-6 gap-4 p-4 md:p-5 items-center transition-colors",
+                            "grid grid-cols-1 md:grid-cols-10 gap-2 p-4 md:p-5 items-center transition-colors",
                             perm.voir ? "bg-white" : "bg-slate-50/50"
                           )}
                         >
                           {/* Module info */}
-                          <div className="col-span-1 flex items-center gap-3">
+                          <div className="col-span-2 flex items-center gap-3">
                             <div className={cn(
-                              "p-2 rounded-xl transition-colors",
+                              "p-2 rounded-xl transition-colors shrink-0",
                               perm.voir ? "bg-primary/10 text-primary" : "bg-slate-150 text-slate-400"
                             )}>
                               <IconComponent className="w-4 h-4" />
                             </div>
-                            <span className="font-bold text-slate-700 text-xs md:text-sm">
+                            <span className="font-bold text-slate-700 text-xs truncate">
                               {mod.label}
                             </span>
                           </div>
 
-                          {/* Toggles */}
-                          {([
-                            { action: 'creer', label: 'Créer' },
-                            { action: 'modifier', label: 'Modifier' },
-                            { action: 'supprimer', label: 'Supprimer' },
-                            { action: 'voir', label: 'Voir Détails' },
-                            { action: 'imprimer', label: 'Imprimer' }
-                          ] as const).map(({ action, label }) => {
+                          {/* Toggles — all 8 actions */}
+                          {ACTIONS.map(({ action, label }) => {
                             const isChecked = perm[action] || false;
-                            
                             return (
                               <div key={action} className="flex md:justify-center items-center justify-between md:py-0 py-1.5 border-t border-slate-50 md:border-t-0">
                                 <span className="text-[10px] font-bold text-slate-400 md:hidden">{label}</span>
@@ -430,13 +269,13 @@ const PermissionsModal: React.FC<PermissionsModalProps> = ({
 
         {/* Footer */}
         <div className="p-6 bg-gradient-to-r from-slate-50 to-yellow-50 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="px-6 py-3 border-2 border-blue-900 rounded-xl text-[10px] font-black uppercase tracking-widest text-blue-900 italic hover:bg-white transition-colors bg-white/50"
           >
             Annuler
           </button>
-          <button 
+          <button
             onClick={handleSaveClick}
             className="px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-800 text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-900/10 hover:scale-105 transition-all"
           >
