@@ -78,12 +78,46 @@ export function useAuth() {
           .select('role')
           .eq('id', _userId)
           .maybeSingle();
-        return (profile?.role as UserRole) ?? 'admin';
+        if (profile?.role) return profile.role as UserRole;
+
+        // If not an admin profile, try worker tables by auth_user_id
+        try {
+          const pimp = await supabase.from('pompistes').select('id').eq('auth_user_id', _userId).maybeSingle();
+          if (pimp.data) return 'pompiste';
+        } catch (e) {}
+        try {
+          const chef = await supabase.from('brigade_chefs').select('id').eq('auth_user_id', _userId).maybeSingle();
+          if (chef.data) return 'chef_brigade';
+        } catch (e) {}
+        try {
+          const ger = await supabase.from('gerants').select('id').eq('auth_user_id', _userId).maybeSingle();
+          if (ger.data) return 'gerant';
+        } catch (e) {}
+        try {
+          const mag = await supabase.from('magasin_workers').select('id').eq('auth_user_id', _userId).maybeSingle();
+          if (mag.data) return 'magasin';
+        } catch (e) {}
+
+        // As a last resort, do NOT default to admin — treat as no-access worker
+        return 'pompiste';
       }
       return (data as UserRole | null) ?? 'admin';
     } catch (err) {
       console.error('[useAuth] fetchRole failed:', err);
-      return 'admin';
+      // If RPC fails entirely, try to infer role from worker tables
+      try {
+        const pimp = await supabase.from('pompistes').select('id').eq('auth_user_id', _userId).maybeSingle();
+        if (pimp.data) return 'pompiste';
+        const chef = await supabase.from('brigade_chefs').select('id').eq('auth_user_id', _userId).maybeSingle();
+        if (chef.data) return 'chef_brigade';
+        const ger = await supabase.from('gerants').select('id').eq('auth_user_id', _userId).maybeSingle();
+        if (ger.data) return 'gerant';
+        const mag = await supabase.from('magasin_workers').select('id').eq('auth_user_id', _userId).maybeSingle();
+        if (mag.data) return 'magasin';
+      } catch (e) {
+        console.error('[useAuth] fallback worker lookup failed:', e);
+      }
+      return 'pompiste';
     }
   };
 
