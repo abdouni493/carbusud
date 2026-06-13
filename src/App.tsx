@@ -102,10 +102,10 @@ function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.React
 
   // For workers, check if they have "voir" permission for this module
   if (state.currentUser?.role !== 'admin' && resolvedModuleId) {
-    const worker = state.pompistes.find(w => w.id === state.currentUser?.id)
-      || state.brigadesChefs.find(w => w.id === state.currentUser?.id)
-      || state.gerants.find(w => w.id === state.currentUser?.id)
-      || state.magasinWorkers.find(w => w.id === state.currentUser?.id);
+    const worker = (state.pompistes?.find(w => w.id === state.currentUser?.id))
+      || (state.brigadesChefs?.find(w => w.id === state.currentUser?.id))
+      || (state.gerants?.find(w => w.id === state.currentUser?.id))
+      || (state.magasinWorkers?.find(w => w.id === state.currentUser?.id));
 
     if (worker?.permissions?.[resolvedModuleId]?.voir) {
       return element; // Has view permission
