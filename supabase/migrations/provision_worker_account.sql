@@ -18,7 +18,7 @@ CREATE OR REPLACE FUNCTION public.provision_worker_account(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER                -- runs as postgres (superuser) → has auth.users access
-SET search_path = public        -- prevents search_path injection
+SET search_path = public, extensions  -- extensions schema needed for pgcrypto (gen_salt, crypt)
 AS $$
 DECLARE
   v_email          text;
