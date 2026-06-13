@@ -164,6 +164,7 @@ export async function provisionWorkerAccount(input: {
   username?: string;
   password?: string;
   name?: string;
+  email?: string;
 }): Promise<{ ok: true; auth_user_id?: string } | { ok: false; error: string }> {
   try {
     const { data, error } = await supabase.rpc('provision_worker_account', {
@@ -173,6 +174,7 @@ export async function provisionWorkerAccount(input: {
       p_username:    input.username ?? null,
       p_password:    input.password ?? null,
       p_name:        input.name ?? null,
+      p_email:       input.email ?? null,
     });
 
     if (error) {

@@ -143,6 +143,7 @@ const Pompistes = () => {
           workerId: selectedPompiste.id,
           username: form.username,
           password: form.password,
+          email: form.email,
         });
         if (!result.ok) {
           const msg = (result as { ok: false; error: string }).error;
@@ -171,6 +172,7 @@ const Pompistes = () => {
           username: form.username,
           password: form.password,
           name: form.name,
+          email: form.email,
         });
         if (result.ok) {
           if (result.auth_user_id) {
@@ -230,6 +232,7 @@ const Pompistes = () => {
       username: activatingPompiste.username,
       password: activatePassword,
       name: activatingPompiste.name,
+      email: activatingPompiste.email,
     });
     setActivateLoading(false);
     if (result.ok) {

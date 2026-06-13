@@ -159,6 +159,7 @@ const MagasinWorkers = () => {
           workerId: selectedWorker.id,
           username: appUsername,
           password: appPassword,
+          email: form.email,
         });
         if (!result.ok) {
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
@@ -187,6 +188,7 @@ const MagasinWorkers = () => {
           username: appUsername,
           password: appPassword,
           name: form.name,
+          email: form.email,
         });
         if (result.ok) {
           if (result.auth_user_id) {

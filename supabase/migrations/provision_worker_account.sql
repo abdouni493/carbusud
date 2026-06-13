@@ -20,7 +20,8 @@ CREATE OR REPLACE FUNCTION public.provision_worker_account(
   p_worker_id   uuid,
   p_username    text DEFAULT NULL,
   p_password    text DEFAULT NULL,
-  p_name        text DEFAULT NULL
+  p_name        text DEFAULT NULL,
+  p_email       text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -45,8 +46,8 @@ BEGIN
         'Type de travailleur invalide: ' || p_worker_type);
   END CASE;
 
-  -- Email convention: username@workers.station.local
-  v_email := lower(p_username) || '@workers.station.local';
+  -- Use the worker's real email if provided; fall back to generated username@workers.station.local
+  v_email := COALESCE(NULLIF(trim(p_email), ''), lower(p_username) || '@workers.station.local');
 
   -- ── CREATE ───────────────────────────────────────────────────────────────
   IF p_action = 'create' THEN
@@ -197,5 +198,5 @@ END;
 $$;
 
 -- Allow both anonymous and authenticated callers (admin pages use authenticated session)
-GRANT EXECUTE ON FUNCTION public.provision_worker_account(text, text, uuid, text, text, text)
+GRANT EXECUTE ON FUNCTION public.provision_worker_account(text, text, uuid, text, text, text, text)
   TO anon, authenticated;

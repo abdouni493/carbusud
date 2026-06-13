@@ -382,6 +382,7 @@ const BrigadeChefs = () => {
           workerId: selectedChef.id,
           username: form.username,
           password: form.password,
+          email: form.email,
         });
         if (!result.ok) {
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
@@ -408,6 +409,7 @@ const BrigadeChefs = () => {
           username: form.username,
           password: form.password,
           name: form.name,
+          email: form.email,
         });
         if (result.ok) {
           if (result.auth_user_id) {
@@ -468,6 +470,7 @@ const BrigadeChefs = () => {
       username: activatingChef.username,
       password: activatePassword,
       name: activatingChef.name,
+      email: activatingChef.email,
     });
     setActivateLoading(false);
     if (result.ok) {

@@ -141,6 +141,7 @@ const Gerants = () => {
           workerId: selectedGerant.id,
           username: form.username,
           password: form.password,
+          email: form.email,
         });
         if (!result.ok) {
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
@@ -167,6 +168,7 @@ const Gerants = () => {
           username: form.username,
           password: form.password,
           name: form.name,
+          email: form.email,
         });
         if (result.ok) {
           if (result.auth_user_id) {
@@ -226,6 +228,7 @@ const Gerants = () => {
       username: activatingGerant.username,
       password: activatePassword,
       name: activatingGerant.name,
+      email: activatingGerant.email,
     });
     setActivateLoading(false);
     if (result.ok) {
