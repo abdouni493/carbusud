@@ -7,6 +7,13 @@
 -- Requires pgcrypto for password hashing (already enabled in all Supabase projects)
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- ── Clean up ghost rows from previous attempts ────────────────────────────────
+-- Previous versions omitted instance_id, making those users invisible to GoTrue
+-- and the Supabase dashboard. Delete them so workers can be re-provisioned cleanly.
+DELETE FROM auth.users
+WHERE email LIKE '%@workers.station.local'
+  AND instance_id IS NULL;
+
 CREATE OR REPLACE FUNCTION public.provision_worker_account(
   p_action      text,          -- 'create' | 'update_password' | 'delete'
   p_worker_type text,          -- 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'
@@ -25,6 +32,7 @@ DECLARE
   v_user_id        uuid;
   v_table          text;
   v_encrypted_pass text;
+  v_check_id       uuid;
 BEGIN
   -- ── Resolve table name ────────────────────────────────────────────────────
   CASE p_worker_type
@@ -59,35 +67,70 @@ BEGIN
     v_encrypted_pass := crypt(p_password, gen_salt('bf', 10));
     v_user_id        := gen_random_uuid();
 
-    -- Insert the auth.users row
+    -- Insert the auth.users row.
+    -- instance_id MUST be '00000000-0000-0000-0000-000000000000' — GoTrue scopes
+    -- all queries by instance_id, so rows with NULL are invisible to both GoTrue
+    -- (login returns 400) and the Supabase dashboard (user does not appear).
     INSERT INTO auth.users (
-      id, aud, role,
-      email, encrypted_password,
-      email_confirmed_at, confirmation_sent_at,
-      raw_app_meta_data, raw_user_meta_data,
-      created_at, updated_at, last_sign_in_at,
-      is_sso_user
+      id,
+      instance_id,
+      aud,
+      role,
+      email,
+      encrypted_password,
+      email_confirmed_at,
+      confirmation_sent_at,
+      raw_app_meta_data,
+      raw_user_meta_data,
+      is_super_admin,
+      created_at,
+      updated_at,
+      last_sign_in_at,
+      is_sso_user,
+      confirmation_token,
+      recovery_token,
+      email_change_token_new,
+      email_change
     ) VALUES (
       v_user_id,
+      '00000000-0000-0000-0000-000000000000',
       'authenticated',
       'authenticated',
       v_email,
       v_encrypted_pass,
-      now(), now(),
+      now(),
+      now(),
       '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object('name', p_name, 'username', p_username, 'role', p_worker_type),
-      now(), now(), NULL,
-      false
+      false,
+      now(),
+      now(),
+      NULL,
+      false,
+      '',
+      '',
+      '',
+      ''
     );
 
+    -- Verify the INSERT actually landed (catches silent rejections)
+    SELECT id INTO v_check_id FROM auth.users WHERE id = v_user_id;
+    IF v_check_id IS NULL THEN
+      RETURN jsonb_build_object('ok', false,
+        'error', 'Insertion dans auth.users échouée silencieusement');
+    END IF;
+
     -- Insert the auth.identities row (needed for GoTrue sign-in to work)
+    -- provider_id = email for the email provider (required NOT NULL in newer Supabase)
     INSERT INTO auth.identities (
       id, user_id,
+      provider_id,
       identity_data, provider,
       last_sign_in_at, created_at, updated_at
     ) VALUES (
-      v_user_id::text,
+      gen_random_uuid(),
       v_user_id,
+      v_email,
       jsonb_build_object(
         'sub',            v_user_id::text,
         'email',          v_email,
