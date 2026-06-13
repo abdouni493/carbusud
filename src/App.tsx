@@ -55,20 +55,20 @@ const ROUTE_TO_MODULE: Record<string, string> = {
   "/pumps":            "Pompes",
   "/tracks":           "Pistes",
   "/delivery-notes":   "Livraisons",
-  "/fuel-purchases":   "Achats Carburant",
+  "/fuel-purchases":   "Livraisons",
   "/products":         "Produits",
-  "/shop-pos":         "Ventes Magasin",
+  "/shop-pos":         "Magasin",
   "/purchases":        "Achats",
   "/inventory":        "Inventaires",
   "/clients":          "Clients",
   "/suppliers":        "Fournisseurs",
-  "/pompistes":        "Gestion Pompistes",
-  "/brigade-chefs":    "Gestion Chefs Brigade",
-  "/gerants":          "Gestion Gérants",
-  "/magasin-workers":  "Gestion Magasin",
-  "/roles-permissions": "Permissions",
+  "/pompistes":        "Pompistes",
+  "/brigade-chefs":    "Chefs de Brigade",
+  "/gerants":          "Gérants",
+  "/magasin-workers":  "Employés Magasin",
+  "/roles-permissions": "Paramètres",
   "/expenses":         "Dépenses",
-  "/daily-report":     "Rapport Quotidien",
+  "/daily-report":     "Fiche Journalière",
   "/statistics":       "Statistiques",
   "/reports":          "Rapports",
 };
@@ -95,17 +95,18 @@ function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.React
   // Resolve moduleId from route path if not provided
   const resolvedModuleId = moduleId || ROUTE_TO_MODULE[location.pathname];
 
-  // Admin always has access
-  if (state.currentUser?.role === 'admin') {
+  // Admin always has access (uses store's currentUserRole)
+  if (state.currentUserRole === 'admin') {
     return element;
   }
 
   // For workers, check if they have "voir" permission for this module
-  if (state.currentUser?.role !== 'admin' && resolvedModuleId) {
-    const worker = (state.pompistes?.find(w => w.id === state.currentUser?.id))
-      || (state.brigadesChefs?.find(w => w.id === state.currentUser?.id))
-      || (state.gerants?.find(w => w.id === state.currentUser?.id))
-      || (state.magasinWorkers?.find(w => w.id === state.currentUser?.id));
+  if (state.currentUserRole !== 'admin' && resolvedModuleId) {
+    const uid = state.currentUserId;
+    const worker = (state.pompistes || []).find(w => w.id === uid)
+      || (state.brigadeChefs || []).find(w => w.id === uid)
+      || (state.gerants || []).find(w => w.id === uid)
+      || (state.magasinWorkers || []).find(w => w.id === uid);
 
     if (worker?.permissions?.[resolvedModuleId]?.voir) {
       return element; // Has view permission
@@ -125,7 +126,7 @@ function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.React
     return <Navigate to="/dashboard" replace />;
   }
 
-  // If no permission mapping or not a worker, allow access
+  // If no permission mapping or no worker info, allow access by default
   return element;
 }
 
