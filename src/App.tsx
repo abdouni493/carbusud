@@ -206,9 +206,12 @@ function AppContent({
 
   // Set current user in global state and load profile (name + avatar)
   useEffect(() => {
+    // For workers we avoid setting the app `currentUserId` to the auth UID
+    // while the worker row is being resolved — otherwise the UI will try
+    // to lookup a worker by the auth ID and incorrectly grant access.
     dispatch({
       type: 'SET_CURRENT_USER',
-      payload: { role: userRole as any, id: userId },
+      payload: { role: userRole as any, id: userRole === 'admin' ? userId : undefined },
     });
 
     if (!userId) return;
@@ -233,18 +236,20 @@ function AppContent({
           // Worker: resolve via RPC
           const { data: workerRow } = await supabase.rpc('get_my_worker');
           if (workerRow) {
-            const w = workerRow as Record<string, unknown>;
-            const rawPhotoUrl = (w.photo_url ?? w.photo) as string | undefined;
-            const avatarUrl = rawPhotoUrl
-              ? (rawPhotoUrl.startsWith('http')
-                  ? rawPhotoUrl
-                  : getPublicUrl(BUCKETS.WORKER_PHOTOS, rawPhotoUrl))
-              : undefined;
-            dispatch({
-              type: 'SET_CURRENT_USER',
-              payload: { role: userRole as any, id: userId, name: w.name as string, avatarUrl },
-            });
-          }
+              const w = workerRow as Record<string, any>;
+              const rawPhotoUrl = (w.photo_url ?? w.photo) as string | undefined;
+              const avatarUrl = rawPhotoUrl
+                ? (rawPhotoUrl.startsWith('http')
+                    ? rawPhotoUrl
+                    : getPublicUrl(BUCKETS.WORKER_PHOTOS, rawPhotoUrl))
+                : undefined;
+              // Use the worker's application ID (row.id), not the Supabase auth UID
+              // so subsequent lookups (permissions, connectedUser) succeed.
+              dispatch({
+                type: 'SET_CURRENT_USER',
+                payload: { role: userRole as any, id: w.id as string, name: w.name as string, avatarUrl },
+              });
+            }
         }
       } catch {
         // Profile load is best-effort; silently ignore failures
