@@ -217,8 +217,8 @@ const MagasinWorkers = () => {
           workerId: selectedWorker.id,
         });
         if (!delResult.ok) {
-          console.warn('[handleDeleteWorker] Auth deletion failed:', delResult.error);
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: `Compte d'authentification non supprimé: ${delResult.error}` } });
+          console.warn('[handleDeleteWorker] Auth deletion failed:', (delResult as {ok:false;error:string}).error);
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: `Compte d'authentification non supprimé: ${(delResult as {ok:false;error:string}).error}` } });
         }
       }
     } catch (err) {
