@@ -192,17 +192,27 @@ const Pompistes = () => {
   const handleDeletePompiste = async () => {
     if (!selectedPompiste) return;
 
-    // Best-effort: clean up auth account before deleting worker record
-    if (selectedPompiste.username) {
-      await provisionWorkerAccount({
-        action: 'delete',
-        workerType: 'pompiste',
-        workerId: selectedPompiste.id,
-      }).catch(err => console.warn('[handleDeletePompiste] Auth cleanup failed:', err));
+    try {
+      // Clean up auth account first (if exists)
+      if (selectedPompiste.username) {
+        const delResult = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'pompiste',
+          workerId: selectedPompiste.id,
+        });
+        if (!delResult.ok) {
+          console.warn('[handleDeletePompiste] Auth deletion failed:', delResult.error);
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: `Compte d'authentification non supprimé: ${delResult.error}` } });
+        }
+      }
+    } catch (err) {
+      console.error('[handleDeletePompiste] Auth cleanup error:', err);
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: "Erreur lors de la suppression du compte d'authentification" } });
     }
 
+    // Delete worker record from app state
     dispatch({ type: 'DELETE_POMPISTE', payload: selectedPompiste.id });
-    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste supprimé" } });
+    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste supprimé avec succès" } });
     setShowConfirmDelete(false);
   };
 

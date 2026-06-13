@@ -208,16 +208,27 @@ const MagasinWorkers = () => {
   const handleDeleteWorker = async () => {
     if (!selectedWorker) return;
 
-    if (selectedWorker.username) {
-      await provisionWorkerAccount({
-        action: 'delete',
-        workerType: 'magasin',
-        workerId: selectedWorker.id,
-      }).catch(err => console.warn('[handleDeleteWorker] Auth cleanup failed:', err));
+    try {
+      // Clean up auth account first (if exists)
+      if (selectedWorker.username) {
+        const delResult = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'magasin',
+          workerId: selectedWorker.id,
+        });
+        if (!delResult.ok) {
+          console.warn('[handleDeleteWorker] Auth deletion failed:', delResult.error);
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: `Compte d'authentification non supprimé: ${delResult.error}` } });
+        }
+      }
+    } catch (err) {
+      console.error('[handleDeleteWorker] Auth cleanup error:', err);
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: "Erreur lors de la suppression du compte d'authentification" } });
     }
 
+    // Delete worker record from app state
     dispatch({ type: 'DELETE_MAGASIN_WORKER', payload: selectedWorker.id });
-    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé supprimé" } });
+    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé supprimé avec succès" } });
     setShowConfirmDelete(false);
   };
 

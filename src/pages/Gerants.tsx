@@ -188,16 +188,27 @@ const Gerants = () => {
   const handleDeleteGerant = async () => {
     if (!selectedGerant) return;
 
-    if (selectedGerant.username) {
-      await provisionWorkerAccount({
-        action: 'delete',
-        workerType: 'gerant',
-        workerId: selectedGerant.id,
-      }).catch(err => console.warn('[handleDeleteGerant] Auth cleanup failed:', err));
+    try {
+      // Clean up auth account first (if exists)
+      if (selectedGerant.username) {
+        const delResult = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'gerant',
+          workerId: selectedGerant.id,
+        });
+        if (!delResult.ok) {
+          console.warn('[handleDeleteGerant] Auth deletion failed:', delResult.error);
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: `Compte d'authentification non supprimé: ${delResult.error}` } });
+        }
+      }
+    } catch (err) {
+      console.error('[handleDeleteGerant] Auth cleanup error:', err);
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: "Erreur lors de la suppression du compte d'authentification" } });
     }
 
+    // Delete worker record from app state
     dispatch({ type: 'DELETE_GERANT', payload: selectedGerant.id });
-    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant supprimé" } });
+    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant supprimé avec succès" } });
     setShowConfirmDelete(false);
   };
 

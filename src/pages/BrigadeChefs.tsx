@@ -430,16 +430,27 @@ const BrigadeChefs = () => {
   const handleDeleteChef = async () => {
     if (!selectedChef) return;
 
-    if (selectedChef.username) {
-      await provisionWorkerAccount({
-        action: 'delete',
-        workerType: 'chef_brigade',
-        workerId: selectedChef.id,
-      }).catch(err => console.warn('[handleDeleteChef] Auth cleanup failed:', err));
+    try {
+      // Clean up auth account first (if exists)
+      if (selectedChef.username) {
+        const delResult = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'chef_brigade',
+          workerId: selectedChef.id,
+        });
+        if (!delResult.ok) {
+          console.warn('[handleDeleteChef] Auth deletion failed:', delResult.error);
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: `Compte d'authentification non supprimé: ${delResult.error}` } });
+        }
+      }
+    } catch (err) {
+      console.error('[handleDeleteChef] Auth cleanup error:', err);
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'warning', message: "Erreur lors de la suppression du compte d'authentification" } });
     }
 
+    // Delete worker record from app state
     dispatch({ type: 'DELETE_BRIGADE_CHEF', payload: selectedChef.id });
-    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade supprimé" } });
+    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade supprimé avec succès" } });
     setShowConfirmDelete(false);
   };
 
