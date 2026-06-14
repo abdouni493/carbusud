@@ -102,7 +102,31 @@ export async function signIn(identifier: string, password: string) {
 
   // Resolve role via RPC — works for both admin_profiles and worker tables
   const { data: roleRow } = await supabase.rpc('get_my_role');
-  const role = (roleRow as string | null) ?? 'admin';
+  let role = roleRow as string | null;
+
+  // If RPC returned null, fall back to direct table queries
+  if (!role) {
+    const uid = data.user.id;
+    const ap = await supabase.from('admin_profiles').select('role').eq('id', uid).maybeSingle();
+    if (ap.data?.role) {
+      role = ap.data.role;
+    } else {
+      const pimp = await supabase.from('pompistes').select('id').eq('auth_user_id', uid).maybeSingle();
+      if (pimp.data) role = 'pompiste';
+      else {
+        const chef = await supabase.from('brigade_chefs').select('id').eq('auth_user_id', uid).maybeSingle();
+        if (chef.data) role = 'chef_brigade';
+        else {
+          const ger = await supabase.from('gerants').select('id').eq('auth_user_id', uid).maybeSingle();
+          if (ger.data) role = 'gerant';
+          else {
+            const mag = await supabase.from('magasin_workers').select('id').eq('auth_user_id', uid).maybeSingle();
+            if (mag.data) role = 'magasin';
+          }
+        }
+      }
+    }
+  }
 
   // Fetch the associated worker row (null for admin users)
   const { data: workerRow } = await supabase.rpc('get_my_worker');

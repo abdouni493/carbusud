@@ -101,7 +101,25 @@ export function useAuth() {
         // As a last resort, do NOT default to admin — treat as no-access worker
         return 'pompiste';
       }
-      return (data as UserRole | null) ?? 'admin';
+      // RPC succeeded — if it returned a role, use it
+      const resolved = data as UserRole | null;
+      if (resolved) return resolved;
+
+      // RPC returned null (worker not found via RPC) — query tables directly
+      const { data: profile } = await supabase
+        .from('admin_profiles').select('role').eq('id', _userId).maybeSingle();
+      if (profile?.role) return profile.role as UserRole;
+
+      const pimp = await supabase.from('pompistes').select('id').eq('auth_user_id', _userId).maybeSingle();
+      if (pimp.data) return 'pompiste';
+      const chef = await supabase.from('brigade_chefs').select('id').eq('auth_user_id', _userId).maybeSingle();
+      if (chef.data) return 'chef_brigade';
+      const ger = await supabase.from('gerants').select('id').eq('auth_user_id', _userId).maybeSingle();
+      if (ger.data) return 'gerant';
+      const mag = await supabase.from('magasin_workers').select('id').eq('auth_user_id', _userId).maybeSingle();
+      if (mag.data) return 'magasin';
+
+      return 'pompiste'; // unknown user — deny admin access
     } catch (err) {
       console.error('[useAuth] fetchRole failed:', err);
       // If RPC fails entirely, try to infer role from worker tables
