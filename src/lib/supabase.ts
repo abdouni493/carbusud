@@ -97,17 +97,26 @@ export async function signIn(identifier: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: 'Identifiant ou mot de passe incorrect' };
 
-  // Resolve role via RPC — works for both admin_profiles and worker tables
+  // Resolve role — always verify against the actual tables so a misconfigured
+  // get_my_role that defaults to 'admin' cannot grant admin access to workers.
+  const uid = data.user.id;
   const { data: roleRow } = await supabase.rpc('get_my_role');
   let role = roleRow as string | null;
 
-  // If RPC returned null, fall back to direct table queries
+  // If the RPC claims 'admin', confirm the user is actually in admin_profiles.
+  // If it returns null or an unverified 'admin', do direct table lookups.
+  if (role === 'admin') {
+    const { data: ap } = await supabase.from('admin_profiles').select('id').eq('id', uid).maybeSingle();
+    if (!ap) role = null; // not actually an admin — fall through to worker lookup
+  }
+
   if (!role) {
-    const uid = data.user.id;
-    const ap = await supabase.from('admin_profiles').select('role').eq('id', uid).maybeSingle();
-    if (ap.data?.role) {
-      role = ap.data.role;
+    // Check admin_profiles first (handles real admins when RPC returned null)
+    const { data: ap } = await supabase.from('admin_profiles').select('role').eq('id', uid).maybeSingle();
+    if (ap?.role) {
+      role = ap.role;
     } else {
+      // Check each worker table by auth_user_id
       const pimp = await supabase.from('pompistes').select('id').eq('auth_user_id', uid).maybeSingle();
       if (pimp.data) role = 'pompiste';
       else {
