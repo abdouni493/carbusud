@@ -270,12 +270,12 @@ const Login = ({ onLogin }: LoginProps) => {
                 {/* Form */}
                 <form className="space-y-5" onSubmit={handleLogin}>
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Email ou identifiant</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Adresse Email</label>
                     <div className="relative">
                       <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
-                      <input type="text" value={email} onChange={e => setEmail(e.target.value)}
+                      <input type="email" value={email} onChange={e => setEmail(e.target.value)}
                         className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400/40 focus:border-yellow-400 transition-all"
-                        placeholder="admin@stationpro.dz ou nom_utilisateur" autoComplete="username" />
+                        placeholder="email@exemple.dz" autoComplete="email" />
                     </div>
                   </div>
 

@@ -87,15 +87,12 @@ export function getPublicUrl(bucket: string, path: string): string {
 // ─── Auth Helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Sign in with email OR username.
- * Workers use the convention `${username}@workers.station.local` as their auth email.
+ * Sign in with email and password.
+ * All users (admin and workers) use their real email address.
  * Returns { user, session, role, profile } on success or { error } on failure.
  */
 export async function signIn(identifier: string, password: string) {
-  const id = identifier.trim().toLowerCase();
-  // Workers use convention `${username}@workers.station.local`; admins pass full email directly.
-  // toLowerCase() is applied first so it matches exactly what provision_worker_account stores.
-  const email = id.includes('@') ? id : `${id}@workers.station.local`;
+  const email = identifier.trim().toLowerCase();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: 'Identifiant ou mot de passe incorrect' };
