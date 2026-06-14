@@ -189,8 +189,19 @@ function getNavGroups(
         .filter(group => group.items.length > 0);
     }
 
-    case 'chef_brigade':
-      return CHEF_BRIGADE_NAV;
+    case 'chef_brigade': {
+      if (!permissions) return CHEF_BRIGADE_NAV;
+      return CHEF_BRIGADE_NAV
+        .map(group => ({
+          ...group,
+          items: group.items.filter(item => {
+            if (!item.moduleId) return true;
+            const perm = permissions[item.moduleId];
+            return perm ? perm.voir : false;
+          })
+        }))
+        .filter(group => group.items.length > 0);
+    }
 
     case 'magasin': {
       if (!permissions) return MAGASIN_NAV;
@@ -258,7 +269,7 @@ function getNavGroups(
           id: "finance", label: "Finances",
           items: [
             { label: "Dépenses",         icon: CreditCard, path: "/expenses",     moduleId: "Dépenses" },
-            { label: "Fiche Journalière",icon: FileText,   path: "/daily-report", moduleId: "Rapports" },
+            { label: "Fiche Journalière",icon: FileText,   path: "/daily-report", moduleId: "Fiche Journalière" },
           ]
         },
         {
@@ -340,8 +351,12 @@ const Sidebar = ({ isOpen, onClose, activePath, onNavigate, onLogout, userRole, 
       const p = (pompistes || []).find(p => p.id === userId);
       return p?.permissions;
     }
+    if (userRole === 'chef_brigade') {
+      const c = (brigadeChefs || []).find(c => c.id === userId);
+      return c?.permissions;
+    }
     return undefined;
-  }, [userRole, userId, gerants, magasinWorkers, pompistes]);
+  }, [userRole, userId, gerants, magasinWorkers, pompistes, brigadeChefs]);
 
   const navGroups = useMemo(
     () => getNavGroups(userRole, userPermissions),

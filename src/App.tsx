@@ -49,7 +49,7 @@ import Planning from "./pages/Planning";
  */
 const ROUTE_TO_MODULE: Record<string, string> = {
   "/brigades":         "Brigades",
-  "/planning":         "Planning",
+  "/planning":          "Brigades",
   "/fuel-sales":       "Ventes Carburant",
   "/tanks":            "Cuves",
   "/pumps":            "Pompes",
@@ -92,27 +92,35 @@ function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.React
   const state = useAppState();
   const dispatch = useAppDispatch();
 
-  // Resolve moduleId from route path if not provided
   const resolvedModuleId = moduleId || ROUTE_TO_MODULE[location.pathname];
 
-  // Admin always has access (uses store's currentUserRole)
+  // Admin always has access
   if (state.currentUserRole === 'admin') {
     return element;
   }
 
-  // For workers, check if they have "voir" permission for this module
-  if (state.currentUserRole !== 'admin' && resolvedModuleId) {
+  // Still hydrating — don't redirect yet
+  if (state.isLoading) {
+    return <></>;
+  }
+
+  if (resolvedModuleId) {
     const uid = state.currentUserId;
     const worker = (state.pompistes || []).find(w => w.id === uid)
       || (state.brigadeChefs || []).find(w => w.id === uid)
       || (state.gerants || []).find(w => w.id === uid)
       || (state.magasinWorkers || []).find(w => w.id === uid);
 
-    if (worker?.permissions?.[resolvedModuleId]?.voir) {
-      return element; // Has view permission
+    // Worker row not yet loaded — wait
+    if (!worker) {
+      return <></>;
     }
 
-    // No permission — redirect to dashboard with toast
+    if (worker.permissions?.[resolvedModuleId]?.voir) {
+      return element;
+    }
+
+    // Permission denied — redirect
     dispatch({
       type: 'ADD_TOAST',
       payload: {
@@ -126,7 +134,6 @@ function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.React
     return <Navigate to="/dashboard" replace />;
   }
 
-  // If no permission mapping or no worker info, allow access by default
   return element;
 }
 
@@ -291,7 +298,7 @@ function AppRoutes({ onLogout }: { onLogout: () => void }) {
 
         {/* Operations */}
         <Route path="/brigades"         element={<ProtectedRoute element={<Brigades />} moduleId="Brigades" />} />
-        <Route path="/planning"         element={<ProtectedRoute element={<Planning />} moduleId="Planning" />} />
+        <Route path="/planning"         element={<ProtectedRoute element={<Planning />} moduleId="Brigades" />} />
         <Route path="/fuel-sales"       element={<ProtectedRoute element={<FuelPOS />} moduleId="Ventes Carburant" />} />
         <Route path="/pos"              element={<Navigate to="/fuel-sales" replace />} />
 
@@ -300,11 +307,11 @@ function AppRoutes({ onLogout }: { onLogout: () => void }) {
         <Route path="/pumps"            element={<ProtectedRoute element={<Pumps />} moduleId="Pompes" />} />
         <Route path="/tracks"           element={<ProtectedRoute element={<Tracks />} moduleId="Pistes" />} />
         <Route path="/delivery-notes"   element={<ProtectedRoute element={<DeliveryNotes />} moduleId="Livraisons" />} />
-        <Route path="/fuel-purchases"   element={<ProtectedRoute element={<FuelPurchases />} moduleId="Achats Carburant" />} />
+        <Route path="/fuel-purchases"   element={<ProtectedRoute element={<FuelPurchases />} moduleId="Livraisons" />} />
 
         {/* Magasin */}
         <Route path="/products"         element={<ProtectedRoute element={<Products />} moduleId="Produits" />} />
-        <Route path="/shop-pos"         element={<ProtectedRoute element={<ShopPOS />} moduleId="Ventes Magasin" />} />
+        <Route path="/shop-pos"         element={<ProtectedRoute element={<ShopPOS />} moduleId="Magasin" />} />
         <Route path="/purchases"        element={<ProtectedRoute element={<Purchases />} moduleId="Achats" />} />
         <Route path="/inventory"        element={<ProtectedRoute element={<Inventory />} moduleId="Inventaires" />} />
 
@@ -313,15 +320,15 @@ function AppRoutes({ onLogout }: { onLogout: () => void }) {
         <Route path="/suppliers"        element={<ProtectedRoute element={<Suppliers />} moduleId="Fournisseurs" />} />
 
         {/* Personnel */}
-        <Route path="/pompistes"        element={<ProtectedRoute element={<Pompistes />} moduleId="Gestion Pompistes" />} />
-        <Route path="/brigade-chefs"    element={<ProtectedRoute element={<BrigadeChefs />} moduleId="Gestion Chefs Brigade" />} />
-        <Route path="/gerants"          element={<ProtectedRoute element={<Gerants />} moduleId="Gestion Gérants" />} />
-        <Route path="/magasin-workers"  element={<ProtectedRoute element={<MagasinWorkers />} moduleId="Gestion Magasin" />} />
-        <Route path="/roles-permissions" element={<ProtectedRoute element={<Permissions />} moduleId="Permissions" />} />
+        <Route path="/pompistes"        element={<ProtectedRoute element={<Pompistes />} moduleId="Pompistes" />} />
+        <Route path="/brigade-chefs"    element={<ProtectedRoute element={<BrigadeChefs />} moduleId="Chefs de Brigade" />} />
+        <Route path="/gerants"          element={<ProtectedRoute element={<Gerants />} moduleId="Gérants" />} />
+        <Route path="/magasin-workers"  element={<ProtectedRoute element={<MagasinWorkers />} moduleId="Employés Magasin" />} />
+        <Route path="/roles-permissions" element={<ProtectedRoute element={<Permissions />} moduleId="Paramètres" />} />
 
         {/* Finances */}
         <Route path="/expenses"         element={<ProtectedRoute element={<Expenses />} moduleId="Dépenses" />} />
-        <Route path="/daily-report"     element={<ProtectedRoute element={<DailyReport />} moduleId="Rapport Quotidien" />} />
+        <Route path="/daily-report"     element={<ProtectedRoute element={<DailyReport />} moduleId="Fiche Journalière" />} />
 
         {/* Analytics */}
         <Route path="/statistics"       element={<ProtectedRoute element={<Statistics />} moduleId="Statistiques" />} />

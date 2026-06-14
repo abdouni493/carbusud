@@ -154,19 +154,24 @@ export function useAuth() {
         // Step 2: If we have a session, immediately show authenticated state
         // and fetch profile in background
         if (session?.user) {
+          // Keep isLoading true until role resolves — prevents admin sidebar flash for workers
           setAuth({
             session,
             user:            session.user,
-            userRole:        'admin', // default while loading
+            userRole:        'admin',
             userId:          session.user.id,
-            isLoading:       false,  // ← RELEASE LOADER IMMEDIATELY
+            isLoading:       true,
             isAuthenticated: true,
           });
 
-          // Step 3: Fetch profile in the background (won't block UI)
+          // Step 3: Fetch role in background, then release loader
           profileFetchRef.current = fetchRole(session.user.id).then((role) => {
             if (mountedRef.current) {
-              setAuth(prev => ({ ...prev, userRole: role }));
+              setAuth(prev => ({ ...prev, userRole: role, isLoading: false }));
+            }
+          }).catch(() => {
+            if (mountedRef.current) {
+              setAuth(prev => ({ ...prev, isLoading: false }));
             }
           });
         } else {
@@ -207,19 +212,23 @@ export function useAuth() {
         if (!mountedRef.current) return;
 
         if (event === 'SIGNED_IN' && session?.user) {
+          // Keep isLoading true until role resolves
           setAuth({
             session,
             user:            session.user,
             userRole:        'admin',
             userId:          session.user.id,
-            isLoading:       false,
+            isLoading:       true,
             isAuthenticated: true,
           });
 
-          // Fetch profile in background
           profileFetchRef.current = fetchRole(session.user.id).then((role) => {
             if (mountedRef.current) {
-              setAuth(prev => ({ ...prev, userRole: role }));
+              setAuth(prev => ({ ...prev, userRole: role, isLoading: false }));
+            }
+          }).catch(() => {
+            if (mountedRef.current) {
+              setAuth(prev => ({ ...prev, isLoading: false }));
             }
           });
         } else if (event === 'SIGNED_OUT') {
