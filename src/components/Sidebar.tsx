@@ -35,6 +35,7 @@ interface SidebarProps {
   onLogout?: () => void;
   userRole: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin';
   userId?: string;
+  userPermissions?: UserPermissions;
 }
 
 // --- Role badge styles ---
@@ -141,7 +142,13 @@ const CHEF_BRIGADE_NAV: NavGroup[] = [
   {
     id: "ops", label: "Mon Équipe",
     items: [
-      { label: "Mes Brigades", icon: Target,     path: "/chef-brigade", moduleId: "Brigades" },
+      { label: "Mes Brigades", icon: Target, path: "/chef-brigade", moduleId: "Brigades" },
+    ]
+  },
+  {
+    id: "fuel", label: "Carburant",
+    items: [
+      { label: "Cuves / Tanks", icon: Gauge, path: "/tanks", moduleId: "Cuves" },
     ]
   },
   {
@@ -176,7 +183,7 @@ function getNavGroups(
 ): NavGroup[] {
   switch (role) {
     case 'pompiste': {
-      if (!permissions) return POMPISTE_NAV;
+      if (!permissions) return POMPISTE_NAV.filter(g => g.id === 'dashboard');
       return POMPISTE_NAV
         .map(group => ({
           ...group,
@@ -190,7 +197,7 @@ function getNavGroups(
     }
 
     case 'chef_brigade': {
-      if (!permissions) return CHEF_BRIGADE_NAV;
+      if (!permissions) return CHEF_BRIGADE_NAV.filter(g => g.id === 'dashboard');
       return CHEF_BRIGADE_NAV
         .map(group => ({
           ...group,
@@ -204,7 +211,7 @@ function getNavGroups(
     }
 
     case 'magasin': {
-      if (!permissions) return MAGASIN_NAV;
+      if (!permissions) return MAGASIN_NAV.filter(g => g.id === 'dashboard');
       return MAGASIN_NAV
         .map(group => ({
           ...group,
@@ -285,7 +292,7 @@ function getNavGroups(
         }
       ];
 
-      if (!permissions) return baseGroups;
+      if (!permissions) return baseGroups.filter(g => g.id === 'dashboard');
 
       // Filter items by permissions.voir
       return baseGroups
@@ -318,7 +325,7 @@ const SETTINGS_PATH: Record<string, string> = {
 
 // --- Component ---
 
-const Sidebar = ({ isOpen, onClose, activePath, onNavigate, onLogout, userRole, userId }: SidebarProps) => {
+const Sidebar = ({ isOpen, onClose, activePath, onNavigate, onLogout, userRole, userId, userPermissions }: SidebarProps) => {
   const { i18n } = useTranslation();
   const isRtl = i18n.dir() === "rtl";
   const [expandedGroups, setExpandedGroups] = useState<string[]>(["ops", "fuel", "magasin", "dashboard"]);
@@ -335,28 +342,6 @@ const Sidebar = ({ isOpen, onClose, activePath, onNavigate, onLogout, userRole, 
     if (userRole === 'admin')        return users.find(u => u.id === userId) ?? null;
     return null;
   }, [userId, userRole, pompistes, brigadeChefs, gerants, magasinWorkers, users]);
-
-  // For gerant and magasin, get their permissions from the store
-  const userPermissions = useMemo(() => {
-    if (!userId) return undefined;
-    if (userRole === 'gerant') {
-      const g = (gerants || []).find(g => g.id === userId);
-      return g?.permissions;
-    }
-    if (userRole === 'magasin') {
-      const m = (magasinWorkers || []).find(m => m.id === userId);
-      return m?.permissions;
-    }
-    if (userRole === 'pompiste') {
-      const p = (pompistes || []).find(p => p.id === userId);
-      return p?.permissions;
-    }
-    if (userRole === 'chef_brigade') {
-      const c = (brigadeChefs || []).find(c => c.id === userId);
-      return c?.permissions;
-    }
-    return undefined;
-  }, [userRole, userId, gerants, magasinWorkers, pompistes, brigadeChefs]);
 
   const navGroups = useMemo(
     () => getNavGroups(userRole, userPermissions),

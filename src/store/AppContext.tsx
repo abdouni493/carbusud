@@ -666,6 +666,7 @@ export interface AppState {
   currentUserId?: string;
   currentUserName?: string;
   currentUserAvatarUrl?: string;
+  currentUserPermissions?: UserPermissions;
   isLoading: boolean;
 }
 
@@ -694,6 +695,7 @@ const initialState: AppState = {
   currentUserRole: 'admin',
   currentUserName: undefined,
   currentUserAvatarUrl: undefined,
+  currentUserPermissions: undefined,
   isLoading: true,
 };
 
@@ -788,7 +790,7 @@ type AppAction =
   | { type: 'UPDATE_BRIGADE_STATUS'; payload: { brigadeId: string; isActive: boolean; status: string } }
   | { type: 'MARK_PAYMENT_PAID'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; paymentId: string } }
   | { type: 'UPDATE_WORKER_PERMISSIONS'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; permissions: UserPermissions } }
-  | { type: 'SET_CURRENT_USER'; payload: { role: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; id?: string; name?: string; avatarUrl?: string } }
+  | { type: 'SET_CURRENT_USER'; payload: { role: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; id?: string; name?: string; avatarUrl?: string; permissions?: UserPermissions } }
   | { type: 'ADD_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
   | { type: 'UPDATE_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
   | { type: 'RESTORE_STATE'; payload: AppState };
@@ -803,7 +805,17 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, ...action.payload, isLoading: false };
 
     case 'SET_CURRENT_USER':
-      return { ...state, currentUserRole: action.payload.role, currentUserId: action.payload.id, currentUserName: action.payload.name, currentUserAvatarUrl: action.payload.avatarUrl };
+      return {
+        ...state,
+        currentUserRole: action.payload.role,
+        currentUserId: action.payload.id,
+        currentUserName: action.payload.name,
+        currentUserAvatarUrl: action.payload.avatarUrl,
+        currentUserPermissions:
+          action.payload.permissions !== undefined
+            ? action.payload.permissions
+            : state.currentUserPermissions,
+      };
 
     case 'ADD_TANK':    return { ...state, tanks: [...state.tanks, action.payload] };
     case 'UPDATE_TANK': return { ...state, tanks: state.tanks.map(t => t.id === action.payload.id ? action.payload : t) };

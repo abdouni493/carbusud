@@ -7,7 +7,7 @@ import React, { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import Layout from "./components/Layout";
-import { AppProvider, useAppState, useAppDispatch } from "./store/AppContext";
+import { AppProvider, useAppState, useAppDispatch, UserPermissions } from "./store/AppContext";
 import { ToastContainer } from "./components/Toast";
 import { useAuth } from "./hooks/useAuth";
 import { db, supabase, BUCKETS, getPublicUrl } from "./lib/supabase";
@@ -105,18 +105,12 @@ function ProtectedRoute({ element, moduleId }: ProtectedRouteProps): React.React
   }
 
   if (resolvedModuleId) {
-    const uid = state.currentUserId;
-    const worker = (state.pompistes || []).find(w => w.id === uid)
-      || (state.brigadeChefs || []).find(w => w.id === uid)
-      || (state.gerants || []).find(w => w.id === uid)
-      || (state.magasinWorkers || []).find(w => w.id === uid);
+    const perms = state.currentUserPermissions;
 
-    // Worker row not yet loaded — wait
-    if (!worker) {
-      return <></>;
-    }
+    // Permissions not resolved yet — wait, do not leak access
+    if (!perms) return <></>;
 
-    if (worker.permissions?.[resolvedModuleId]?.voir) {
+    if (perms[resolvedModuleId]?.voir) {
       return element;
     }
 
@@ -254,7 +248,7 @@ function AppContent({
               // so subsequent lookups (permissions, connectedUser) succeed.
               dispatch({
                 type: 'SET_CURRENT_USER',
-                payload: { role: userRole as any, id: w.id as string, name: w.name as string, avatarUrl },
+                payload: { role: userRole as any, id: w.id as string, name: w.name as string, avatarUrl, permissions: (w.permissions ?? {}) as UserPermissions },
               });
             }
         }

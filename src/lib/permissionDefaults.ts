@@ -132,6 +132,8 @@ export function getDefaultPermissions(
     perms["Brigades"]         = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: true, exporter: false, scanner: false, generer: false };
     // Fuel sales: full access
     perms["Ventes Carburant"] = { ...fullPermission };
+    // Cuves: view only (chef needs to see tank levels)
+    perms["Cuves"]            = { ...viewOnlyPermission };
     // My payments: view only
     perms["Mes Paiements"]    = { ...viewOnlyPermission };
     // Profile settings: view + modify
