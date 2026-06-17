@@ -183,7 +183,8 @@ function getNavGroups(
 ): NavGroup[] {
   switch (role) {
     case 'pompiste': {
-      if (!permissions) return POMPISTE_NAV.filter(g => g.id === 'dashboard');
+      const isEmpty = !permissions || Object.keys(permissions).length === 0;
+      if (isEmpty) return POMPISTE_NAV.filter(g => g.id === 'dashboard');
       return POMPISTE_NAV
         .map(group => ({
           ...group,
@@ -197,7 +198,8 @@ function getNavGroups(
     }
 
     case 'chef_brigade': {
-      if (!permissions) return CHEF_BRIGADE_NAV.filter(g => g.id === 'dashboard');
+      const isEmpty = !permissions || Object.keys(permissions).length === 0;
+      if (isEmpty) return CHEF_BRIGADE_NAV.filter(g => g.id === 'dashboard');
       return CHEF_BRIGADE_NAV
         .map(group => ({
           ...group,
@@ -211,7 +213,8 @@ function getNavGroups(
     }
 
     case 'magasin': {
-      if (!permissions) return MAGASIN_NAV.filter(g => g.id === 'dashboard');
+      const isEmpty = !permissions || Object.keys(permissions).length === 0;
+      if (isEmpty) return MAGASIN_NAV.filter(g => g.id === 'dashboard');
       return MAGASIN_NAV
         .map(group => ({
           ...group,
@@ -292,7 +295,8 @@ function getNavGroups(
         }
       ];
 
-      if (!permissions) return baseGroups.filter(g => g.id === 'dashboard');
+      const isEmpty = !permissions || Object.keys(permissions).length === 0;
+      if (isEmpty) return baseGroups.filter(g => g.id === 'dashboard');
 
       // Filter items by permissions.voir
       return baseGroups
