@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Track, Pump } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Track, Pump } from "../store/AppContext";
 import toast from "react-hot-toast";
 
 interface TrackCardProps {
@@ -31,9 +31,11 @@ interface TrackCardProps {
   onEdit: () => void;
   onDelete: () => void;
   onDetail: () => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-const TrackCard: React.FC<TrackCardProps> = ({ track, assignedPumps, pompisteCount, onEdit, onDelete, onDetail }) => {
+const TrackCard: React.FC<TrackCardProps> = ({ track, assignedPumps, pompisteCount, onEdit, onDelete, onDetail, canEdit = true, canDelete = true }) => {
   return (
     <motion.div 
       layout
@@ -53,13 +55,15 @@ const TrackCard: React.FC<TrackCardProps> = ({ track, assignedPumps, pompisteCou
             </p>
           </div>
         </div>
-        <div className="relative group/menu">
-           <button className="p-2 hover:bg-slate-50 rounded-xl text-slate-400"><MoreVertical className="w-5 h-5" /></button>
-           <div className="absolute right-0 top-full mt-1 bg-white border border-slate-100 shadow-xl rounded-xl py-2 w-40 opacity-0 invisible group-hover/menu:opacity-100 group-hover/menu:visible transition-all z-20">
-              <button onClick={onEdit} className="w-full flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"><Edit2 className="w-4 h-4 text-blue-600" /> Modifier</button>
-              <button onClick={onDelete} className="w-full flex items-center gap-2 px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors"><Trash2 className="w-4 h-4" /> Supprimer</button>
-           </div>
-        </div>
+        {(canEdit || canDelete) && (
+          <div className="relative group/menu">
+             <button className="p-2 hover:bg-slate-50 rounded-xl text-slate-400"><MoreVertical className="w-5 h-5" /></button>
+             <div className="absolute right-0 top-full mt-1 bg-white border border-slate-100 shadow-xl rounded-xl py-2 w-40 opacity-0 invisible group-hover/menu:opacity-100 group-hover/menu:visible transition-all z-20">
+                {canEdit && <button onClick={onEdit} className="w-full flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"><Edit2 className="w-4 h-4 text-blue-600" /> Modifier</button>}
+                {canDelete && <button onClick={onDelete} className="w-full flex items-center gap-2 px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors"><Trash2 className="w-4 h-4" /> Supprimer</button>}
+             </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -110,6 +114,7 @@ const Tracks = () => {
   const { t } = useTranslation();
   const { tracks, pumps, pompistes, fuelSales, brigades } = useAppState();
   const dispatch = useAppDispatch();
+  const perm = useModulePermission('Pistes');
 
   const [showModal, setShowModal] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
@@ -182,22 +187,26 @@ const Tracks = () => {
           <h1 className="text-2xl font-black text-primary uppercase italic tracking-tighter">Configuration des Pistes</h1>
           <p className="text-slate-500 font-medium">Répartition géographique des points de vente et du personnel.</p>
         </div>
-        <button 
-          onClick={() => handleOpenModal()}
-          className="btn-primary h-14 px-8 tracking-[0.2em]"
-        >
-          <Plus className="w-5 h-5" /> NOUVELLE PISTE
-        </button>
+        {perm.creer && (
+          <button
+            onClick={() => handleOpenModal()}
+            className="btn-primary h-14 px-8 tracking-[0.2em]"
+          >
+            <Plus className="w-5 h-5" /> NOUVELLE PISTE
+          </button>
+        )}
       </div>
 
       {/* Tracks Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
         {tracks.map((track) => (
-          <TrackCard 
-            key={track.id} 
-            track={track} 
+          <TrackCard
+            key={track.id}
+            track={track}
             assignedPumps={pumps.filter(p => p.trackId === track.id)}
             pompisteCount={pompistes.filter(p => p.trackId === track.id).length}
+            canEdit={perm.modifier}
+            canDelete={perm.supprimer}
             onEdit={() => handleOpenModal(track)}
             onDetail={() => { setSelectedTrack(track); setShowDetail(true); }}
             onDelete={() => setShowConfirmDelete(track.id)}

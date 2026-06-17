@@ -5,6 +5,7 @@ import React, {
   ReactNode,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
 } from 'react';
 import { ToastMessage, ToastType } from '../components/Toast';
@@ -2306,6 +2307,32 @@ export const useRtl = () => {
   const dispatch  = useAppDispatch();
   return { isRtl, toggleRtl: () => dispatch({ type: 'TOGGLE_RTL' }) };
 };
+
+// ─── useModulePermission: per-module action gating ───────────────────────────
+const ALL_ALLOWED: UserPermission = {
+  voir: true, creer: true, modifier: true, supprimer: true,
+  imprimer: true, exporter: true, scanner: true, generer: true,
+};
+const NONE_ALLOWED: UserPermission = {
+  voir: false, creer: false, modifier: false, supprimer: false,
+  imprimer: false, exporter: false, scanner: false, generer: false,
+};
+
+/**
+ * Returns the current user's permission flags for a module.
+ * Admins always get full access. Workers get exactly what the admin granted
+ * (missing module → everything false). Use this to show/hide action buttons:
+ *
+ *   const perm = useModulePermission('Cuves');
+ *   {perm.creer && <button>Ajouter</button>}
+ */
+export function useModulePermission(moduleId: string): UserPermission {
+  const { currentUserRole, currentUserPermissions } = useAppState();
+  return useMemo(() => {
+    if (currentUserRole === 'admin') return ALL_ALLOWED;
+    return currentUserPermissions?.[moduleId] ?? NONE_ALLOWED;
+  }, [currentUserRole, currentUserPermissions, moduleId]);
+}
 
 // ─── useSupabaseDispatch: alias for useAppDispatch (already synced) ───────────
 /**

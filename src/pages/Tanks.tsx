@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, litersFromDegrees, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Tank, FuelType } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Tank, FuelType } from "../store/AppContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
 
@@ -21,7 +21,7 @@ const fuelColors: Record<string, { bg: string; text: string; bar: string }> = {
 };
 
 // ── TankCard ─────────────────────────────────────────────────────────────────
-const TankCard = ({ tank, settings, onEdit, onDelete, onHistory, onConverter, onGplCalc }: any) => {
+const TankCard = ({ tank, settings, onEdit, onDelete, onHistory, onConverter, onGplCalc, canEdit = true, canDelete = true }: any) => {
   const curve: { degree: number; liters: number }[] =
     settings?.conversionTables?.[tank.id] || [];
   // Use curve-derived liters if a curve exists; fall back to stored current.
@@ -64,12 +64,16 @@ const TankCard = ({ tank, settings, onEdit, onDelete, onHistory, onConverter, on
             <button onClick={onHistory} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
               <History className="w-4 h-4" />
             </button>
-            <button onClick={onEdit} className="p-1.5 hover:bg-blue-50 rounded-lg text-blue-500 transition-colors">
-              <Edit2 className="w-4 h-4" />
-            </button>
-            <button onClick={onDelete} className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors">
-              <Trash2 className="w-4 h-4" />
-            </button>
+            {canEdit && (
+              <button onClick={onEdit} className="p-1.5 hover:bg-blue-50 rounded-lg text-blue-500 transition-colors">
+                <Edit2 className="w-4 h-4" />
+              </button>
+            )}
+            {canDelete && (
+              <button onClick={onDelete} className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -508,6 +512,7 @@ const ConverterModal = ({ tank, settings, onClose }: any) => {
 const Tanks = () => {
   const { tanks, settings, brigades, deliveryNotes } = useAppState();
   const dispatch = useAppDispatch();
+  const perm = useModulePermission('Cuves');
   const [showModal, setShowModal] = useState(false);
   const [editTank, setEditTank] = useState<Tank | null>(null);
   const [deleteTank, setDeleteTank] = useState<Tank | null>(null);
@@ -558,13 +563,15 @@ const Tanks = () => {
             )}
           </div>
         </div>
-        {/* NOUVELLE CUVE — always opens modal in create mode */}
-        <button
-          onClick={() => { setEditTank(null); setShowModal(true); }}
-          className="btn-primary h-14 px-8 tracking-[0.2em]"
-        >
-          <Plus className="w-4 h-4" /> NOUVELLE CUVE
-        </button>
+        {/* NOUVELLE CUVE — only shown if the user has create permission */}
+        {perm.creer && (
+          <button
+            onClick={() => { setEditTank(null); setShowModal(true); }}
+            className="btn-primary h-14 px-8 tracking-[0.2em]"
+          >
+            <Plus className="w-4 h-4" /> NOUVELLE CUVE
+          </button>
+        )}
       </div>
 
       {/* Type filter chips — "Tous" resets to show all */}
@@ -594,6 +601,8 @@ const Tanks = () => {
               key={tank.id}
               tank={tank}
               settings={settings}
+              canEdit={perm.modifier}
+              canDelete={perm.supprimer}
               onEdit={() => { setEditTank(tank); setShowModal(true); }}
               onDelete={() => setDeleteTank(tank)}
               onHistory={() => setHistoryTank(tank)}

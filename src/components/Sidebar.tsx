@@ -112,68 +112,108 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-// --- Role-specific nav groups ---
+// --- Worker nav (permission-driven) ---
+//
+// Worker sidebars are NOT hardcoded per role. They are built by filtering this
+// master module map against the worker's saved permissions, so ANY module the
+// admin grants (via the Permissions modal) shows up in that worker's sidebar.
+//
+// `group` controls which section the item lands in; `path` points to the
+// worker-facing page for that module.
 
-const POMPISTE_NAV: NavGroup[] = [
-  {
-    id: "dashboard",
-    items: [{ label: "Tableau de Bord", icon: LayoutDashboard, path: "/dashboard", moduleId: "Tableau de bord" }]
-  },
-  {
-    id: "ops", label: "Mon Travail",
-    items: [
-      { label: "Ma Brigade",    icon: Target,  path: "/my-brigade",   moduleId: "Ma Brigade" },
-      { label: "Vente Magasin", icon: Store,   path: "/shop-pos",     moduleId: "Magasin" },
-    ]
-  },
-  {
-    id: "personal", label: "Personnel",
-    items: [
-      { label: "Mes Paiements", icon: Wallet, path: "/my-payments", moduleId: "Mes Paiements" },
-    ]
-  },
+interface ModuleNavDef { label: string; icon: React.ElementType; path: string; group: string }
+
+const WORKER_MODULE_NAV: Record<string, ModuleNavDef> = {
+  // Opérations
+  "Ma Brigade":        { label: "Ma Brigade",        icon: Target,       path: "/my-brigade",      group: "ops" },
+  "Brigades":          { label: "Brigades",          icon: Target,       path: "/brigades",        group: "ops" },
+  "Planning":          { label: "Planning",          icon: Calendar,     path: "/planning",        group: "ops" },
+  "Ventes Carburant":  { label: "Ventes Carburant",  icon: Fuel,         path: "/fuel-sales",      group: "ops" },
+  "Magasin":           { label: "Vente Magasin",     icon: Store,        path: "/shop-pos",        group: "ops" },
+  // Carburant
+  "Cuves":             { label: "Cuves / Tanks",     icon: Gauge,        path: "/tanks",           group: "fuel" },
+  "Pompes":            { label: "Pompes",            icon: Wrench,       path: "/pumps",           group: "fuel" },
+  "Pistes":            { label: "Pistes",            icon: Map,          path: "/tracks",          group: "fuel" },
+  "Livraisons":        { label: "Achats Carburant",  icon: ShoppingCart, path: "/fuel-purchases",  group: "fuel" },
+  // Magasin
+  "Produits":          { label: "Produits",          icon: Package,      path: "/products",        group: "magasin" },
+  "Achats":            { label: "Achats Magasin",    icon: ShoppingCart, path: "/purchases",       group: "magasin" },
+  "Inventaires":       { label: "Inventaire",        icon: Archive,      path: "/inventory",       group: "magasin" },
+  // Contacts
+  "Clients":           { label: "Clients",           icon: Users,        path: "/clients",         group: "contacts" },
+  "Fournisseurs":      { label: "Fournisseurs",      icon: Truck,        path: "/suppliers",       group: "contacts" },
+  // Personnel (RH)
+  "Pompistes":         { label: "Pompistes",         icon: UsersRound,   path: "/pompistes",       group: "hr" },
+  "Chefs de Brigade":  { label: "Chefs de Brigade",  icon: UserCog,      path: "/brigade-chefs",   group: "hr" },
+  "Gérants":           { label: "Gérants",           icon: Building2,    path: "/gerants",         group: "hr" },
+  "Employés Magasin":  { label: "Employés Magasin",  icon: Store,        path: "/magasin-workers", group: "hr" },
+  // Finances
+  "Dépenses":          { label: "Dépenses",          icon: CreditCard,   path: "/expenses",        group: "finance" },
+  "Fiche Journalière": { label: "Fiche Journalière", icon: FileText,     path: "/daily-report",    group: "finance" },
+  // Analytique
+  "Statistiques":      { label: "Statistiques",      icon: BarChart2,    path: "/statistics",      group: "stats" },
+  "Rapports":          { label: "Rapports",          icon: Receipt,      path: "/reports",         group: "stats" },
+  // Mon compte
+  "Mes Paiements":     { label: "Mes Paiements",     icon: Wallet,       path: "/my-payments",     group: "personal" },
+};
+
+// Section order + labels for worker sidebars
+const WORKER_GROUP_ORDER: { id: string; label?: string }[] = [
+  { id: "ops",      label: "Mon Travail" },
+  { id: "fuel",     label: "Carburant" },
+  { id: "magasin",  label: "Magasin" },
+  { id: "contacts", label: "Contacts" },
+  { id: "hr",       label: "Personnel" },
+  { id: "finance",  label: "Finances" },
+  { id: "stats",    label: "Analytique" },
+  { id: "personal", label: "Mon Compte" },
 ];
 
-const CHEF_BRIGADE_NAV: NavGroup[] = [
-  {
-    id: "dashboard",
-    items: [{ label: "Tableau de Bord", icon: LayoutDashboard, path: "/dashboard", moduleId: "Tableau de bord" }]
+// Per-role label/path overrides for modules that resolve to a role-specific page.
+// e.g. a chef's "Brigades" grant opens *their* brigades page, not the admin one.
+const WORKER_NAV_OVERRIDES: Record<string, Record<string, { label?: string; path?: string }>> = {
+  chef_brigade: {
+    "Brigades": { label: "Mes Brigades", path: "/chef-brigade" },
   },
-  {
-    id: "ops", label: "Mon Équipe",
-    items: [
-      { label: "Mes Brigades", icon: Target, path: "/chef-brigade", moduleId: "Brigades" },
-    ]
-  },
-  {
-    id: "fuel", label: "Carburant",
-    items: [
-      { label: "Cuves / Tanks", icon: Gauge, path: "/tanks", moduleId: "Cuves" },
-    ]
-  },
-  {
-    id: "personal", label: "Personnel",
-    items: [
-      { label: "Mes Paiements", icon: Wallet, path: "/my-payments", moduleId: "Mes Paiements" },
-    ]
-  },
-];
+};
 
-const MAGASIN_NAV: NavGroup[] = [
-  {
-    id: "ops", label: "Mon Travail",
-    items: [
-      { label: "Vente Magasin", icon: Store,   path: "/shop-pos",  moduleId: "Magasin" },
-      { label: "Produits",      icon: Package, path: "/products",  moduleId: "Produits" },
-    ]
-  },
-  {
-    id: "personal", label: "Personnel",
-    items: [
-      { label: "Mes Paiements", icon: Wallet, path: "/my-payments", moduleId: "Mes Paiements" },
-    ]
-  },
-];
+const DASHBOARD_ITEM: NavItem = { label: "Tableau de Bord", icon: LayoutDashboard, path: "/dashboard", moduleId: "Tableau de bord" };
+
+/**
+ * Build a worker's sidebar purely from their permissions. Every module with
+ * `voir: true` produces a nav item; everything else is hidden. The dashboard is
+ * always present (its route is unprotected and serves as the safe landing page).
+ */
+function buildWorkerNav(role: string, permissions?: UserPermissions): NavGroup[] {
+  const groups: NavGroup[] = [{ id: "dashboard", items: [DASHBOARD_ITEM] }];
+
+  const isEmpty = !permissions || Object.keys(permissions).length === 0;
+  if (isEmpty) return groups;
+
+  const overrides = WORKER_NAV_OVERRIDES[role] || {};
+  const byGroup = new Map<string, NavItem[]>();
+
+  for (const [moduleId, def] of Object.entries(WORKER_MODULE_NAV)) {
+    if (!permissions[moduleId]?.voir) continue;
+    const ov = overrides[moduleId];
+    const item: NavItem = {
+      label: ov?.label ?? def.label,
+      icon: def.icon,
+      path: ov?.path ?? def.path,
+      moduleId,
+    };
+    const list = byGroup.get(def.group) ?? [];
+    list.push(item);
+    byGroup.set(def.group, list);
+  }
+
+  for (const g of WORKER_GROUP_ORDER) {
+    const items = byGroup.get(g.id);
+    if (items && items.length > 0) groups.push({ id: g.id, label: g.label, items });
+  }
+
+  return groups;
+}
 
 // --- Nav builder function ---
 
@@ -182,134 +222,11 @@ function getNavGroups(
   permissions?: UserPermissions
 ): NavGroup[] {
   switch (role) {
-    case 'pompiste': {
-      const isEmpty = !permissions || Object.keys(permissions).length === 0;
-      if (isEmpty) return POMPISTE_NAV.filter(g => g.id === 'dashboard');
-      return POMPISTE_NAV
-        .map(group => ({
-          ...group,
-          items: group.items.filter(item => {
-            if (!item.moduleId) return true;
-            const perm = permissions[item.moduleId];
-            return perm ? perm.voir : false;
-          })
-        }))
-        .filter(group => group.items.length > 0);
-    }
-
-    case 'chef_brigade': {
-      const isEmpty = !permissions || Object.keys(permissions).length === 0;
-      if (isEmpty) return CHEF_BRIGADE_NAV.filter(g => g.id === 'dashboard');
-      return CHEF_BRIGADE_NAV
-        .map(group => ({
-          ...group,
-          items: group.items.filter(item => {
-            if (!item.moduleId) return true;
-            const perm = permissions[item.moduleId];
-            return perm ? perm.voir : false;
-          })
-        }))
-        .filter(group => group.items.length > 0);
-    }
-
-    case 'magasin': {
-      const isEmpty = !permissions || Object.keys(permissions).length === 0;
-      if (isEmpty) return MAGASIN_NAV.filter(g => g.id === 'dashboard');
-      return MAGASIN_NAV
-        .map(group => ({
-          ...group,
-          items: group.items.filter(item => {
-            if (!item.moduleId) return true;
-            const perm = permissions[item.moduleId];
-            return perm ? perm.voir : false;
-          })
-        }))
-        .filter(group => group.items.length > 0);
-    }
-
-    case 'gerant': {
-      // Start with a base set, then filter per permissions
-      const baseGroups: NavGroup[] = [
-        {
-          id: "dashboard",
-          items: [{ label: "Tableau de Bord", icon: LayoutDashboard, path: "/dashboard", moduleId: "Tableau de bord" }]
-        },
-        {
-          id: "ops", label: "Opérations",
-          items: [
-            { label: "Brigades",         icon: Target, path: "/brigades" },
-            { label: "Planning",        icon: Calendar,     path: "/planning", moduleId: "Brigades" },
-            { label: "Vente Magasin",    icon: Store,  path: "/shop-pos",   moduleId: "Magasin" },
-          ]
-        },
-        {
-          id: "fuel", label: "Carburant",
-          items: [
-            { label: "Cuves / Tanks", icon: Gauge,        path: "/tanks",          moduleId: "Cuves" },
-            { label: "Pompes",         icon: Wrench,       path: "/pumps",          moduleId: "Pompes" },
-            { label: "Pistes",         icon: Map,          path: "/tracks",         moduleId: "Pistes" },
-            { label: "Achats Carburant", icon: ShoppingCart,path: "/fuel-purchases", moduleId: "Livraisons" },
-          ]
-        },
-        {
-          id: "magasin", label: "Magasin",
-          items: [
-            { label: "Produits",   icon: Package,     path: "/products",  moduleId: "Produits" },
-            { label: "Achats Magasin", icon: ShoppingCart,path: "/purchases", moduleId: "Achats" },
-            { label: "Inventaire", icon: Archive,     path: "/inventory", moduleId: "Inventaires" },
-          ]
-        },
-        {
-          id: "contacts", label: "Contacts",
-          items: [
-            { label: "Clients",      icon: Users, path: "/clients",   moduleId: "Clients" },
-            { label: "Fournisseurs", icon: Truck, path: "/suppliers", moduleId: "Fournisseurs" },
-          ]
-        },
-        {
-          id: "hr", label: "Personnel",
-          items: [
-            { label: "Pompistes",        icon: UsersRound, path: "/pompistes",       moduleId: "Pompistes" },
-            { label: "Chefs de Brigade", icon: UserCog,    path: "/brigade-chefs",   moduleId: "Chefs de Brigade" },
-            { label: "Gérants",          icon: Building2,  path: "/gerants",         moduleId: "Gérants" },
-            { label: "Employés Magasin", icon: Store,      path: "/magasin-workers", moduleId: "Employés Magasin" },
-          ]
-        },
-        {
-          id: "finance", label: "Finances",
-          items: [
-            { label: "Dépenses",         icon: CreditCard, path: "/expenses",     moduleId: "Dépenses" },
-            { label: "Fiche Journalière",icon: FileText,   path: "/daily-report", moduleId: "Fiche Journalière" },
-          ]
-        },
-        {
-          id: "stats", label: "Analytique",
-          items: [
-            { label: "Statistiques", icon: BarChart2, path: "/statistics", moduleId: "Statistiques" },
-            { label: "Rapports",     icon: Receipt,   path: "/reports",    moduleId: "Rapports" },
-          ]
-        },
-        {
-          id: "personal", label: "Personnel",
-          items: [{ label: "Mes Paiements", icon: Wallet, path: "/my-payments" }]
-        }
-      ];
-
-      const isEmpty = !permissions || Object.keys(permissions).length === 0;
-      if (isEmpty) return baseGroups.filter(g => g.id === 'dashboard');
-
-      // Filter items by permissions.voir
-      return baseGroups
-        .map(group => ({
-          ...group,
-          items: group.items.filter(item => {
-            if (!item.moduleId) return true;
-            const perm = permissions[item.moduleId];
-            return perm ? perm.voir : false;
-          })
-        }))
-        .filter(group => group.items.length > 0);
-    }
+    case 'pompiste':
+    case 'chef_brigade':
+    case 'magasin':
+    case 'gerant':
+      return buildWorkerNav(role, permissions);
 
     case 'admin':
     default:

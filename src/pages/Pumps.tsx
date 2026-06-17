@@ -21,13 +21,14 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId, orNull } from "@/src/lib/utils";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import { useAppState, useAppDispatch, Pump, PumpNozzle, FuelType } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Pump, PumpNozzle, FuelType } from "../store/AppContext";
 import toast from "react-hot-toast";
 
 const Pumps = () => {
   const { t } = useTranslation();
   const { pumps, tanks, tracks, pumpNozzles = [], brigades = [] } = useAppState();
   const dispatch = useAppDispatch();
+  const perm = useModulePermission('Pompes');
 
   const [showModal, setShowModal] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
@@ -129,12 +130,14 @@ const Pumps = () => {
           <h1 className="text-3xl font-black text-primary uppercase italic tracking-tight">Gestion des Pompes</h1>
           <p className="text-slate-500 font-medium">Configurez et suivez les index de vos pompes à carburant.</p>
         </div>
-        <button 
-          onClick={handleOpenAdd}
-          className="btn-primary h-14 px-8 tracking-[0.2em]"
-        >
-          <Plus className="w-4 h-4" /> AJOUTER UNE POMPE
-        </button>
+        {perm.creer && (
+          <button
+            onClick={handleOpenAdd}
+            className="btn-primary h-14 px-8 tracking-[0.2em]"
+          >
+            <Plus className="w-4 h-4" /> AJOUTER UNE POMPE
+          </button>
+        )}
       </div>
 
       {/* Search Bar */}
@@ -244,25 +247,31 @@ const Pumps = () => {
                     >
                       <Eye className="w-4 h-4 mx-auto" />
                     </button>
-                    <button
-                      onClick={() => { setNozzlePump(pump); setNozzleForm({ name: '', lastIndex: 0 }); setEditingNozzle(null); setShowNozzleModal(true); }}
-                      className="flex-1 py-2.5 rounded-xl font-bold text-[9px] uppercase tracking-widest bg-purple-50 text-purple-600 hover:bg-purple-100 transition-colors"
-                      title="Gérer les pistolets"
-                    >
-                      <Zap className="w-4 h-4 mx-auto" />
-                    </button>
-                    <button
-                      onClick={() => handleOpenEdit(pump)}
-                      className="flex-1 py-2.5 rounded-xl font-bold text-[9px] uppercase tracking-widest bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                    >
-                      <Edit2 className="w-4 h-4 mx-auto" />
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(pump.id)}
-                      className="flex-1 py-2.5 rounded-xl font-bold text-[9px] uppercase tracking-widest bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4 mx-auto" />
-                    </button>
+                    {perm.modifier && (
+                      <button
+                        onClick={() => { setNozzlePump(pump); setNozzleForm({ name: '', lastIndex: 0 }); setEditingNozzle(null); setShowNozzleModal(true); }}
+                        className="flex-1 py-2.5 rounded-xl font-bold text-[9px] uppercase tracking-widest bg-purple-50 text-purple-600 hover:bg-purple-100 transition-colors"
+                        title="Gérer les pistolets"
+                      >
+                        <Zap className="w-4 h-4 mx-auto" />
+                      </button>
+                    )}
+                    {perm.modifier && (
+                      <button
+                        onClick={() => handleOpenEdit(pump)}
+                        className="flex-1 py-2.5 rounded-xl font-bold text-[9px] uppercase tracking-widest bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4 mx-auto" />
+                      </button>
+                    )}
+                    {perm.supprimer && (
+                      <button
+                        onClick={() => setShowDeleteConfirm(pump.id)}
+                        className="flex-1 py-2.5 rounded-xl font-bold text-[9px] uppercase tracking-widest bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4 mx-auto" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </motion.div>
