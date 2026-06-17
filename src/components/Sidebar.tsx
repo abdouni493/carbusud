@@ -191,7 +191,9 @@ function buildWorkerNav(role: string, permissions?: UserPermissions): NavGroup[]
   if (isEmpty) return groups;
 
   const overrides = WORKER_NAV_OVERRIDES[role] || {};
-  const byGroup = new Map<string, NavItem[]>();
+  // NOTE: a plain object is used (not `new Map()`) because `Map` is imported
+  // from lucide-react as an icon in this file and shadows the global Map.
+  const byGroup: Record<string, NavItem[]> = {};
 
   for (const [moduleId, def] of Object.entries(WORKER_MODULE_NAV)) {
     if (!permissions[moduleId]?.voir) continue;
@@ -202,13 +204,12 @@ function buildWorkerNav(role: string, permissions?: UserPermissions): NavGroup[]
       path: ov?.path ?? def.path,
       moduleId,
     };
-    const list = byGroup.get(def.group) ?? [];
-    list.push(item);
-    byGroup.set(def.group, list);
+    if (!byGroup[def.group]) byGroup[def.group] = [];
+    byGroup[def.group].push(item);
   }
 
   for (const g of WORKER_GROUP_ORDER) {
-    const items = byGroup.get(g.id);
+    const items = byGroup[g.id];
     if (items && items.length > 0) groups.push({ id: g.id, label: g.label, items });
   }
 
