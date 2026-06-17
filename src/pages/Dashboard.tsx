@@ -138,6 +138,88 @@ const TanksPanel = ({ tanks, delay = 0.2 }: { tanks: any[]; delay?: number }) =>
   </motion.div>
 );
 
+/* ─── Dashboard header (outside Dashboard so React.memo prevents remount every tick) ─── */
+interface DashboardHeaderProps {
+  stationName: string;
+  activeBrigade?: { chefId?: string; startTimestamp?: string } | null;
+  brigadeChefs: { id: string; name: string }[];
+  showBrigadeBadge: boolean;
+}
+
+const DashboardHeader = React.memo(({ stationName, activeBrigade, brigadeChefs, showBrigadeBadge }: DashboardHeaderProps) => {
+  const [timeStr, setTimeStr] = useState(() =>
+    new Date().toLocaleTimeString('fr-DZ', { hour: '2-digit', minute: '2-digit' })
+  );
+  useEffect(() => {
+    const t = setInterval(() =>
+      setTimeStr(new Date().toLocaleTimeString('fr-DZ', { hour: '2-digit', minute: '2-digit' })),
+    30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const dateStr = new Date().toLocaleDateString('fr-DZ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="relative overflow-hidden rounded-3xl"
+      style={{ background: "linear-gradient(135deg,#001233 0%,#002470 55%,#003087 100%)", boxShadow: "0 8px 40px rgba(0,48,135,0.28)" }}
+    >
+      {/* Decorative glows */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        backgroundImage: "radial-gradient(ellipse at 15% 60%,rgba(255,184,0,0.16) 0%,transparent 55%),radial-gradient(ellipse at 85% 10%,rgba(0,68,187,0.22) 0%,transparent 55%)"
+      }} />
+      {/* Gold accent line */}
+      <div className="absolute top-0 left-0 right-0 h-[3px]" style={{
+        background: "linear-gradient(90deg,transparent 0%,#FFB800 30%,#FFD55A 50%,#FFB800 70%,transparent 100%)"
+      }} />
+
+      <div className="relative z-10 flex flex-wrap items-center justify-between gap-6 px-8 py-6">
+        {/* Station identity */}
+        <div className="flex items-center gap-5">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+            style={{ background: "rgba(255,184,0,0.12)", border: "1px solid rgba(255,184,0,0.25)" }}>
+            <Fuel className="w-7 h-7" style={{ color: "#FFB800" }} />
+          </div>
+          <div>
+            <p className="text-white/40 text-[10px] font-bold uppercase tracking-[0.3em] mb-0.5">Station Service Naftal</p>
+            <h1 className="text-3xl font-black text-white leading-none">{stationName}</h1>
+            <div className="flex items-center gap-2.5 mt-1.5">
+              <p className="text-white/45 text-sm capitalize">{dateStr}</p>
+              <span className="w-1 h-1 rounded-full bg-white/25" />
+              <p className="text-white/45 text-sm font-mono">{timeStr}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Brigade active badge */}
+        {showBrigadeBadge && activeBrigade && (
+          <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl border border-white/15"
+            style={{ background: "rgba(255,255,255,0.07)", backdropFilter: "blur(12px)" }}>
+            <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+              <span className="animate-ping absolute h-full w-full rounded-full bg-green-400 opacity-75" />
+              <span className="relative h-2.5 w-2.5 rounded-full bg-green-400" />
+            </span>
+            <div>
+              <p className="text-green-400 text-[10px] font-black uppercase tracking-wider leading-none mb-0.5">Brigade Active</p>
+              <p className="text-white font-black text-sm leading-none">
+                {brigadeChefs.find(c => c.id === activeBrigade.chefId)?.name || '—'}
+              </p>
+              {activeBrigade.startTimestamp && (
+                <p className="text-white/40 text-[10px] mt-0.5">
+                  Depuis {new Date(activeBrigade.startTimestamp).toLocaleTimeString('fr-DZ', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+});
+DashboardHeader.displayName = 'DashboardHeader';
+
 /* ─── Main Dashboard ─── */
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -238,53 +320,18 @@ const Dashboard = () => {
     return `${h}:${m}:${s}`;
   };
 
-  /* ── Shared header ── */
-  const Header = () => (
-    <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-3xl p-8"
-      style={{ background: "linear-gradient(135deg,#001233 0%,#002470 50%,#003087 100%)", boxShadow: "0 8px 32px rgba(0,48,135,0.25)" }}>
-      <div className="absolute inset-0 opacity-10 pointer-events-none"
-        style={{ backgroundImage: "radial-gradient(circle at 20% 50%,#FFB800 0%,transparent 50%),radial-gradient(circle at 80% 20%,#0044bb 0%,transparent 50%)" }} />
-      <div className="relative z-10 flex flex-wrap items-center justify-between gap-6">
-        <div>
-          <p className="text-white/50 text-xs font-bold uppercase tracking-[0.3em] mb-1">Tableau de Bord</p>
-          <h1 className="text-4xl font-black text-white">{settings?.name || "Station Naftal"}</h1>
-          <p className="text-white/40 text-sm mt-1">{now.toLocaleDateString('fr-DZ', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</p>
-        </div>
-        <div className="flex items-center gap-4">
-          {(showFull || isChef) && activeBrigade && (
-            <div className="bg-white/10 backdrop-blur rounded-2xl p-4 border border-white/20">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute h-full w-full rounded-full bg-green-400 opacity-75" />
-                  <span className="relative h-2 w-2 rounded-full bg-green-400" />
-                </span>
-                <span className="text-green-400 text-[10px] font-black uppercase tracking-wider">Brigade Active</span>
-              </div>
-              <p className="text-white font-black text-sm">{brigadeChefs.find(c => c.id === activeBrigade.chefId)?.name}</p>
-              <p className="text-white/50 text-xs mt-0.5">
-                Depuis {activeBrigade.startTimestamp ? new Date(activeBrigade.startTimestamp).toLocaleTimeString('fr-DZ',{hour:'2-digit',minute:'2-digit'}) : '--:--'}
-              </p>
-            </div>
-          )}
-          {showFull && (
-            <button onClick={() => navigate("/fuel-sales")}
-              className="flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-sm text-[#001f5c] transition-all hover:shadow-lg"
-              style={{ background: "linear-gradient(135deg,#FFB800,#e6a000)", boxShadow: "0 4px 14px rgba(255,184,0,0.4)" }}>
-              <Fuel className="w-4 h-4" /> Nouvelle Vente
-            </button>
-          )}
-        </div>
-      </div>
-    </motion.div>
-  );
 
   /* ════════════════════════════════════════════════════════════ */
   /* ADMIN / GÉRANT — full dashboard                             */
   /* ════════════════════════════════════════════════════════════ */
   if (showFull) return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-      <Header />
+      <DashboardHeader
+        stationName={settings?.name || "Station Naftal"}
+        activeBrigade={activeBrigade}
+        brigadeChefs={brigadeChefs}
+        showBrigadeBadge={showFull || isChef}
+      />
 
       {/* Résumé du Jour */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
@@ -488,7 +535,12 @@ const Dashboard = () => {
   /* ════════════════════════════════════════════════════════════ */
   if (isChef) return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-      <Header />
+      <DashboardHeader
+        stationName={settings?.name || "Station Naftal"}
+        activeBrigade={activeBrigade}
+        brigadeChefs={brigadeChefs}
+        showBrigadeBadge={showFull || isChef}
+      />
       <AlertsWidget alerts={dashboardAlerts} onDismiss={dismiss} />
 
       <div className="grid lg:grid-cols-3 gap-5">
@@ -589,7 +641,12 @@ const Dashboard = () => {
   /* ════════════════════════════════════════════════════════════ */
   if (isPompiste) return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-      <Header />
+      <DashboardHeader
+        stationName={settings?.name || "Station Naftal"}
+        activeBrigade={activeBrigade}
+        brigadeChefs={brigadeChefs}
+        showBrigadeBadge={showFull || isChef}
+      />
       <AlertsWidget alerts={dashboardAlerts} onDismiss={dismiss} />
 
       <div className="grid lg:grid-cols-3 gap-5">
@@ -680,7 +737,12 @@ const Dashboard = () => {
   /* ════════════════════════════════════════════════════════════ */
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-      <Header />
+      <DashboardHeader
+        stationName={settings?.name || "Station Naftal"}
+        activeBrigade={activeBrigade}
+        brigadeChefs={brigadeChefs}
+        showBrigadeBadge={showFull || isChef}
+      />
       <AlertsWidget alerts={dashboardAlerts} onDismiss={dismiss} />
 
       <div className="grid lg:grid-cols-3 gap-5">
