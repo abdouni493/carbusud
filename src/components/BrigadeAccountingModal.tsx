@@ -549,7 +549,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                       <div className="p-3 bg-white rounded-xl">
                         <p className="text-[9px] text-slate-400 uppercase mb-1">Écart</p>
                         <p className={cn("font-black", Math.abs(ecart) < 2 ? "text-green-600" : "text-red-600")}>{ecart > 0 ? '+' : ''}{ecart.toFixed(1)} L</p>
-                        <p className={cn("text-[10px] font-black", ecartMoney < 0 ? "text-red-500" : "text-green-500")}>{(ecartMoney > 0 ? '+' : '')}{ecartMoney.toFixed(0)} MAD</p>
+                        <p className={cn("text-[10px] font-black", ecartMoney < 0 ? "text-red-500" : "text-green-500")}>{(ecartMoney > 0 ? '+' : '')}{ecartMoney.toFixed(0)} DA</p>
                       </div>
                     </div>
                   </div>
@@ -568,7 +568,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                         </div>
                         <div className="text-right">
                           <p className={cn("font-black text-sm", d.liters < 0 ? "text-red-700" : "text-yellow-700")}>{d.liters > 0 ? '+' : ''}{d.liters.toFixed(2)} L</p>
-                          <p className={cn("font-black text-xs", d.money < 0 ? "text-red-600" : "text-yellow-600")}>{d.money > 0 ? '+' : ''}{d.money.toFixed(0)} MAD</p>
+                          <p className={cn("font-black text-xs", d.money < 0 ? "text-red-600" : "text-yellow-600")}>{d.money > 0 ? '+' : ''}{d.money.toFixed(0)} DA</p>
                           <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full", d.money < 0 ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700")}>{d.money < 0 ? 'BONUS' : 'RETENUE'}</span>
                         </div>
                       </div>
@@ -607,7 +607,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                       {Object.keys(decalageByPompiste).length} agent(s)
                     </p>
                     <p className="text-[10px]" style={{ color: Object.keys(decalageByPompiste).length > 0 ? '#d97706' : '#16a34a' }}>
-                      {(Object.values(decalageByPompiste) as DecalageEntry[]).reduce((s, d) => s + d.money, 0).toFixed(0)} MAD
+                      {(Object.values(decalageByPompiste) as DecalageEntry[]).reduce((s, d) => s + d.money, 0).toFixed(0)} DA
                     </p>
                   </div>
                 </div>
@@ -615,7 +615,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                 {/* Total due banner */}
                 <div className="p-6 bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 rounded-2xl text-center">
                   <p className="text-[10px] font-black text-blue-200 uppercase tracking-widest mb-2">Montant Total Dû</p>
-                  <p className="text-4xl font-black text-yellow-400">{totalRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} <span className="text-xl">MAD</span></p>
+                  <p className="text-4xl font-black text-yellow-400">{totalRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} <span className="text-xl">DA</span></p>
                   <p className="text-[11px] text-blue-300 mt-2">{nozzleData.reduce((s, d) => s + d.liters, 0).toFixed(2)} L vendus</p>
                 </div>
 
@@ -749,7 +749,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
 
                 {/* Cash received */}
                 <div className="p-5 bg-green-50 rounded-2xl border-2 border-green-200">
-                  <label className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-2 block">Espèces Reçues du Chef (MAD)</label>
+                  <label className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-2 block">Espèces Reçues du Chef (DA)</label>
                   <input type="number" step="0.01" placeholder="0.00"
                     className="w-full px-4 py-3 bg-white border-2 border-green-300 rounded-xl font-bold text-xl outline-none focus:ring-2 focus:ring-green-400"
                     value={cashReceived || ''}
@@ -962,7 +962,7 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                     {Math.abs(reste) < 1 ? '✓ Soldé' : reste > 0 ? 'Reste à Justifier' : 'Excédent'}
                   </p>
                   <p className={cn("text-3xl font-black", Math.abs(reste) < 1 ? "text-green-700" : reste > 0 ? "text-red-700" : "text-yellow-700")}>
-                    {reste > 0 ? '+' : ''}{reste.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} MAD
+                    {reste > 0 ? '+' : ''}{reste.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA
                   </p>
                 </div>
 

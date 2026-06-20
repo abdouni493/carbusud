@@ -75,8 +75,9 @@ const SectionHeader = ({ num, label, icon: Icon, colorClass = "bg-blue-900/10 te
 const DailyReport = () => {
   const dispatch = useAppDispatch();
   const {
-    tanks, brigades, pumps, deliveryNotes, products, expenses,
-    fuelSales, shopSales, settings, brigadeChefs, pompistes, purchases, clients
+    tanks, brigades, pumps, pumpNozzles, deliveryNotes, products, expenses,
+    fuelSales, shopSales, settings, brigadeChefs, pompistes, purchases, clients,
+    tracks, brigadeAccountings
   } = useAppState();
 
   const reportRef = useRef<HTMLDivElement>(null);
@@ -85,6 +86,7 @@ const DailyReport = () => {
   const [startDate, setStartDate]     = useState(new Date().toISOString().split("T")[0]);
   const [endDate, setEndDate]         = useState(new Date().toISOString().split("T")[0]);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
 
   const handleGenerate = () => {
     setIsLoading(true);
@@ -164,31 +166,75 @@ const DailyReport = () => {
 
     /* 3. BRIGADES */
     const brigadeDetails = selBrigades.map(b => {
-      const chef       = brigadeChefs.find(c => c.id === b.chefId);
-      const pomps      = (b.pompisteIds ?? []).map(pid => pompistes.find(p => p.id === pid)).filter(Boolean);
-      const bFuel      = selFuel.filter(s => s.brigadeId === b.id);
-      const totalLiters  = bFuel.reduce((a, c) => a + c.liters, 0);
-      const totalRevenue = bFuel.reduce((a, c) => a + c.total, 0);
+      const chef = brigadeChefs.find(c => c.id === b.chefId);
+      const accounting = brigadeAccountings?.find(a => a.brigadeId === b.id);
 
-      // Per-pompiste data
-      const pompisteBreakdown = pomps.map(pomp => {
-        if (!pomp) return null;
-        const pSales = bFuel.filter(s => s.pompisteId === pomp.id);
-        const liters = pSales.reduce((a, c) => a + c.liters, 0);
-        const revenue= pSales.reduce((a, c) => a + c.total, 0);
-        const pd     = b.pompisteData?.[pomp.id];
-        return { name: pomp.name, liters, revenue, decalage: pd?.decalage ?? 0,
-                 cash: pd?.collected.cash ?? 0, bons: pd?.collected.bons ?? 0,
-                 cheques: pd?.collected.cheques ?? 0 };
-      }).filter(Boolean);
+      // Determine active nozzles for this brigade (mirrors BrigadeAccountingModal)
+      const activeNozzles = (() => {
+        if (b.activeNozzleIds && b.activeNozzleIds.length > 0)
+          return pumpNozzles.filter(n => b.activeNozzleIds!.includes(n.id));
+        const brigadeTrackIds = (b.pompisteAssignments || []).filter(a => a.present).map(a => a.trackId);
+        const displayPumps = brigadeTrackIds.length > 0
+          ? pumps.filter(p => brigadeTrackIds.includes(p.trackId))
+          : pumps.filter(p => Object.keys(b.startIndices || {}).includes(p.id));
+        return pumpNozzles.filter(n => displayPumps.some(p => p.id === n.pumpId));
+      })();
 
-      const totalDecalage = (b.pompisteData
-        ? Object.values(b.pompisteData).reduce((a, d: any) => a + (d.decalage ?? 0), 0)
-        : 0);
+      // Per-nozzle data with indexes and amounts
+      const nozzleDetail = activeNozzles.map(nozzle => {
+        const pump = pumps.find(p => p.id === nozzle.pumpId);
+        const tank = tanks.find(t => t.id === pump?.tankId);
+        const track = tracks.find(t => t.id === pump?.trackId);
+        const assignment = (b.pompisteAssignments || []).find(a => a.trackId === pump?.trackId && a.present);
+        const pompiste = pompistes.find(p => p.id === assignment?.pompisteId);
+        const startIdx = b.startNozzleIndices?.[nozzle.id] ?? (b.startIndices?.[nozzle.pumpId] || 0);
+        const endIdx = b.endNozzleIndices?.[nozzle.id] ?? (b.endIndices?.[nozzle.pumpId] || startIdx);
+        const liters = Math.max(0, endIdx - startIdx);
+        const price = settings.fuelPrices[pump?.type as any] || 0;
+        return {
+          nozzleId: nozzle.id, nozzleName: nozzle.name,
+          pumpId: pump?.id, pumpName: pump?.name, pumpType: pump?.type,
+          tankName: tank?.name,
+          trackId: track?.id, trackName: track?.name,
+          pompisteName: pompiste?.name,
+          startIdx, endIdx, liters, price, amount: liters * price,
+        };
+      });
 
-      return { id: b.id, date: b.date, shift: b.shift, chefName: chef?.name ?? "—",
-               status: b.status, startTime: b.startTime, endTime: b.endTime,
-               pomps: pompisteBreakdown, totalLiters, totalRevenue, totalDecalage };
+      const totalLiters = nozzleDetail.reduce((s, d) => s + d.liters, 0);
+      const totalRevenue = nozzleDetail.reduce((s, d) => s + d.amount, 0);
+
+      // Per-piste summary
+      const pisteDetail = (b.pompisteAssignments || []).filter(a => a.present).map(assignment => {
+        const pompiste = pompistes.find(p => p.id === assignment.pompisteId);
+        const track = tracks.find(t => t.id === assignment.trackId);
+        const trackPumps = pumps.filter(p => p.trackId === assignment.trackId);
+        const pisteNozzles = nozzleDetail.filter(d => trackPumps.some(p => p.id === d.pumpId));
+        return {
+          pompisteName: pompiste?.name || '—',
+          trackName: track?.name || '—',
+          liters: pisteNozzles.reduce((s, d) => s + d.liters, 0),
+          revenue: pisteNozzles.reduce((s, d) => s + d.amount, 0),
+          pumps: trackPumps.map(pump => {
+            const pumpNozzlesForPump = nozzleDetail.filter(d => d.pumpId === pump.id);
+            return {
+              pumpName: pump.name, pumpType: pump.type,
+              liters: pumpNozzlesForPump.reduce((s, d) => s + d.liters, 0),
+              revenue: pumpNozzlesForPump.reduce((s, d) => s + d.amount, 0),
+              nozzles: pumpNozzlesForPump,
+            };
+          }).filter(p => p.nozzles.length > 0),
+        };
+      });
+
+      return {
+        id: b.id, date: b.date, shift: b.shift, chefName: chef?.name ?? '—',
+        status: b.status, startTime: b.startTime, endTime: b.endTime,
+        totalLiters, totalRevenue,
+        nozzleDetail, pisteDetail,
+        accounting,
+        decalageSummary: accounting?.decalageSummary || {},
+      };
     });
 
     /* 4. PAYMENT BREAKDOWN */
@@ -241,18 +287,95 @@ const DailyReport = () => {
       totalLiters: selFuel.reduce((a, c) => a + c.liters, 0),
     };
   }, [isGenerated, startDate, endDate, fuelSales, shopSales, expenses, brigades,
-      tanks, pumps, deliveryNotes, purchases, brigadeChefs, pompistes, clients]);
+      tanks, pumps, pumpNozzles, deliveryNotes, purchases, brigadeChefs, pompistes,
+      clients, tracks, brigadeAccountings, settings]);
 
   /* ─── Export ─── */
   const exportPDF = async () => {
     if (!reportRef.current) return;
-    const canvas  = await html2canvas(reportRef.current, { scale: 2, backgroundColor: "#ffffff" });
-    const imgData = canvas.toDataURL("image/png");
-    const pdf     = new jsPDF("p", "mm", "a4");
-    const w       = pdf.internal.pageSize.getWidth();
-    const h       = (canvas.height * w) / canvas.width;
-    pdf.addImage(imgData, "PNG", 0, 0, w, h);
-    pdf.save(`Journal_Activite_${startDate}_${endDate}.pdf`);
+
+    // Temporarily make the element visible and full height for capture
+    const el = reportRef.current;
+    const originalOverflow = el.style.overflow;
+    el.style.overflow = 'visible';
+
+    try {
+      const canvas = await html2canvas(el, {
+        scale: 1.5,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        scrollX: 0,
+        scrollY: -window.scrollY,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10; // 10mm margin
+      const contentWidth = pdfWidth - margin * 2;
+      const contentHeight = pdfHeight - margin * 2;
+
+      // Full-image dimensions in PDF units
+      const imgWidth = contentWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      // Add pages as needed
+      let yOffset = 0;
+      let pageNum = 0;
+
+      while (yOffset < imgHeight) {
+        if (pageNum > 0) pdf.addPage();
+
+        // Add station header on each page
+        pdf.setFillColor(0, 18, 51); // blue-900
+        pdf.rect(0, 0, pdfWidth, 12, 'F');
+        pdf.setTextColor(255, 184, 0); // gold
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(`${settings.name || 'Station'} — Fiche Journalière — ${startDate} → ${endDate}`, margin, 8);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text(`Page ${pageNum + 1}`, pdfWidth - margin - 10, 8);
+
+        // Slice of the source canvas for this page
+        const sourceY = (yOffset / imgHeight) * canvas.height;
+        const sourceH = Math.min(
+          (contentHeight / imgHeight) * canvas.height,
+          canvas.height - sourceY
+        );
+
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sourceH;
+        const ctx = pageCanvas.getContext('2d')!;
+        ctx.drawImage(canvas, 0, sourceY, canvas.width, sourceH, 0, 0, canvas.width, sourceH);
+
+        const pageImg = pageCanvas.toDataURL('image/png');
+        const sliceHeight = (sourceH / canvas.height) * imgHeight;
+
+        pdf.addImage(pageImg, 'PNG', margin, 14, contentWidth, Math.min(sliceHeight, contentHeight - 4));
+
+        yOffset += contentHeight;
+        pageNum++;
+      }
+
+      pdf.save(`Fiche_Journaliere_${startDate}_${endDate}.pdf`);
+    } finally {
+      el.style.overflow = originalOverflow;
+    }
+  };
+
+  const handleExportPDF = async () => {
+    setIsPdfLoading(true);
+    try {
+      await exportPDF();
+    } finally {
+      setIsPdfLoading(false);
+    }
   };
 
   const sections = [
@@ -288,14 +411,15 @@ const DailyReport = () => {
         </div>
         {isGenerated && (
           <div className="flex gap-3">
-            <button onClick={exportPDF}
-              className="h-12 px-6 bg-white border border-slate-200 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:border-blue-900 hover:text-blue-900 transition-all shadow-sm">
-              <Download className="w-4 h-4" /> PDF
+            <button onClick={handleExportPDF} disabled={isPdfLoading}
+              className="h-12 px-6 bg-white border-2 border-blue-900 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-blue-900 hover:bg-blue-900 hover:text-yellow-400 transition-all shadow-sm disabled:opacity-60">
+              {isPdfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              {isPdfLoading ? 'Export...' : 'Télécharger PDF'}
             </button>
             <button onClick={() => window.print()}
               className="h-12 px-6 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl transition-all hover:scale-105"
               style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
-              <Printer className="w-4 h-4" /> IMPRIMER
+              <Printer className="w-4 h-4" /> Imprimer
             </button>
           </div>
         )}
@@ -381,7 +505,34 @@ const DailyReport = () => {
       {/* ══════ GENERATED REPORT ══════ */}
       {isGenerated && reportData && !isLoading && (
         <motion.div ref={reportRef} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+          id="daily-report-print-area"
           className="space-y-10 print-section">
+
+          {/* Print-only header */}
+          <div className="hidden print:block print-only mb-6">
+            <div className="flex items-start justify-between pb-4 border-b-2 border-blue-900">
+              <div className="flex items-start gap-4">
+                {(settings.logoUrl || (settings as any).logo) ? (
+                  <img src={settings.logoUrl || (settings as any).logo} alt="logo" style={{ width: 64, height: 64, objectFit: 'contain' }} />
+                ) : (
+                  <div style={{ width: 64, height: 64, background: '#001233', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ color: '#FFB800', fontSize: 24 }}>⛽</span>
+                  </div>
+                )}
+                <div>
+                  <h1 style={{ fontWeight: 900, fontSize: 20, color: '#001233', margin: 0 }}>{settings.name || 'Station'}</h1>
+                  <p style={{ fontWeight: 900, fontSize: 10, color: '#001233', textTransform: 'uppercase', letterSpacing: 3, margin: '4px 0 0 0' }}>FICHE JOURNALIÈRE D'ACTIVITÉ</p>
+                  <p style={{ fontSize: 12, color: '#64748b', margin: '2px 0 0 0' }}>Période: {startDate} → {endDate}</p>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
+                {settings.address && <p style={{ margin: '0 0 2px 0' }}>{settings.address}</p>}
+                {settings.phone && <p style={{ margin: '0 0 2px 0' }}>Tél: {settings.phone}</p>}
+                {(settings as any).fiscalId && <p style={{ margin: '0 0 2px 0' }}>NIF: {(settings as any).fiscalId}</p>}
+                <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#94a3b8' }}>Généré le {new Date().toLocaleString('fr-FR')}</p>
+              </div>
+            </div>
+          </div>
 
           {/* ─── Company Header ─── */}
           <div className="rounded-3xl overflow-hidden shadow-2xl"
@@ -574,101 +725,206 @@ const DailyReport = () => {
           <section id="section-brigades" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
             <SectionHeader num="03" label="Brigades & Pompistes" icon={Users}
               colorClass="bg-purple-50 text-purple-700" />
-            <div className="space-y-5">
+            {/* Period totals summary */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              {[
+                {
+                  label: 'Total Brigades',
+                  value: `${reportData.brigadeDetails.length}`,
+                  sub: 'sur la période',
+                  icon: Users,
+                  color: 'from-blue-900 to-blue-800',
+                },
+                {
+                  label: 'Total Litres',
+                  value: `${reportData.brigadeDetails.reduce((s: number, b: any) => s + b.totalLiters, 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} L`,
+                  sub: 'carburant distribué',
+                  icon: Droplets,
+                  color: 'from-blue-700 to-blue-600',
+                },
+                {
+                  label: 'Total CA (vente)',
+                  value: `${reportData.brigadeDetails.reduce((s: number, b: any) => s + b.totalRevenue, 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA`,
+                  sub: 'prix de vente',
+                  icon: TrendingUp,
+                  color: 'from-green-700 to-green-600',
+                },
+                {
+                  label: 'Gains Carburant',
+                  value: `${(reportData.brigadeDetails.reduce((s: number, b: any) => s + b.totalRevenue, 0) - reportData.fuelPurchasesTotal).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA`,
+                  sub: 'vente − achat',
+                  icon: DollarSign,
+                  color: reportData.brigadeDetails.reduce((s: number, b: any) => s + b.totalRevenue, 0) - reportData.fuelPurchasesTotal >= 0 ? 'from-emerald-600 to-emerald-700' : 'from-red-600 to-red-700',
+                },
+              ].map((card, i) => (
+                <div key={i} className={`bg-gradient-to-br ${card.color} rounded-2xl p-5 text-white`}>
+                  <div className="w-8 h-8 bg-white/15 rounded-xl flex items-center justify-center mb-3">
+                    <card.icon className="w-4 h-4 text-white" />
+                  </div>
+                  <p className="text-[9px] font-black uppercase tracking-widest opacity-60 mb-1">{card.label}</p>
+                  <p className="text-xl font-black leading-none tracking-tighter">{card.value}</p>
+                  <p className="text-[10px] opacity-40 mt-1 font-bold uppercase tracking-widest">{card.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-6">
               {reportData.brigadeDetails.length === 0 && (
                 <p className="text-slate-300 font-black text-sm text-center py-12 uppercase tracking-widest">Aucune brigade pour cette période</p>
               )}
-              {reportData.brigadeDetails.map((b, bi) => (
+              {reportData.brigadeDetails.map((b: any, bi: number) => (
                 <motion.div key={b.id}
                   initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: bi * 0.06 }}
-                  className="border border-slate-100 rounded-2xl overflow-hidden">
+                  className="rounded-2xl overflow-hidden border-2 border-blue-100">
+
                   {/* Brigade Header */}
-                  <div className="p-5 flex flex-wrap items-center justify-between gap-4"
-                       style={{ background: `linear-gradient(90deg, ${C.blue900}08, ${C.blue600}06)` }}>
+                  <div className="px-5 py-4 flex items-center justify-between"
+                       style={{ background: `linear-gradient(90deg, ${C.blue900}, ${C.blue800})` }}>
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-white"
-                           style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
-                        {b.chefName.charAt(0)}
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-blue-900 text-sm"
+                           style={{ background: C.gold }}>
+                        {b.shift === 'Matin' ? '☀️' : b.shift === 'Soir' ? '🌙' : '⭐'}
                       </div>
                       <div>
-                        <p className="font-black text-blue-900 uppercase text-sm tracking-tight">{b.chefName}</p>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{b.id} • {b.date} • {b.shift}</p>
+                        <p className="font-black text-white uppercase text-sm tracking-tight">{b.chefName}</p>
+                        <p className="text-[10px] text-blue-300 font-bold uppercase">
+                          {b.date} · {b.shift} · {b.startTime || '—'} → {b.endTime || '—'}
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      {b.startTime && (
-                        <span className="text-[10px] font-black text-slate-500 flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {b.startTime} → {b.endTime}
-                        </span>
-                      )}
-                      <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase",
-                        b.status === "Clôturée" ? "bg-green-50 text-green-700" :
-                        b.status === "Ouverte"  ? "bg-blue-50 text-blue-700" :
-                        "bg-slate-100 text-slate-500")}>
-                        {b.status}
-                      </span>
-                      {b.totalDecalage !== 0 && (
-                        <span className={cn("px-3 py-1 rounded-full text-[10px] font-black",
-                          b.totalDecalage >= 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600")}>
-                          Décalage: {b.totalDecalage >= 0 ? "+" : ""}{b.totalDecalage.toLocaleString()} DA
-                        </span>
-                      )}
+                    <div className="text-right">
+                      <p className="text-2xl font-black" style={{ color: C.gold }}>
+                        {b.totalRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA
+                      </p>
+                      <p className="text-[11px] text-blue-300">{b.totalLiters.toFixed(2)} L vendus</p>
                     </div>
                   </div>
-                  {/* Brigade summary */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-slate-100">
-                    {[
-                      { label: "Volume Distribué",  value: `${b.totalLiters.toLocaleString()} L`, color: "text-blue-800" },
-                      { label: "Encaissement Total", value: `${b.totalRevenue.toLocaleString()} DA`, color: "text-green-700" },
-                      { label: "Pompistes",          value: `${b.pomps.length} agents`, color: "text-blue-600" },
-                    ].map(s => (
-                      <div key={s.label} className="p-4 bg-white">
-                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{s.label}</p>
-                        <p className={cn("font-black text-lg leading-none", s.color)}>{s.value}</p>
+
+                  {/* Per-Piste → Pompe → Pistolet detail */}
+                  <div className="p-4 space-y-3 bg-slate-50">
+                    {(b.pisteDetail || []).map((piste: any, pi: number) => (
+                      <div key={pi} className="rounded-xl overflow-hidden border-2 border-blue-200 bg-white">
+                        {/* Piste header */}
+                        <div className="px-4 py-2.5 bg-blue-900 flex items-center justify-between">
+                          <div>
+                            <p className="font-black text-white text-sm">{piste.trackName}</p>
+                            <p className="text-[10px] text-blue-300">Pompiste: {piste.pompisteName}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-black text-yellow-400">{piste.revenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                            <p className="text-[10px] text-blue-300">{piste.liters.toFixed(2)} L</p>
+                          </div>
+                        </div>
+                        {/* Per pump */}
+                        {(piste.pumps || []).map((pump: any, pumpi: number) => (
+                          <div key={pumpi} className="border-t border-blue-100">
+                            <div className="px-4 py-2 bg-slate-50 flex items-center justify-between border-b border-slate-200">
+                              <span className="text-[10px] font-black text-slate-600 uppercase">🔧 {pump.pumpName} ({pump.pumpType})</span>
+                              <span className="text-[10px] font-black text-slate-600">{pump.liters.toFixed(2)} L — {pump.revenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</span>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="bg-slate-100">
+                                    {['Pistolet', 'Idx Début', 'Idx Fin', 'Litres', 'Prix/L', 'Montant'].map(h => (
+                                      <th key={h} className="px-3 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(pump.nozzles || []).map((nozzle: any, ni: number) => (
+                                    <tr key={ni} className="border-b border-slate-100">
+                                      <td className="px-3 py-2 font-bold border border-slate-200">⚡ {nozzle.nozzleName}</td>
+                                      <td className="px-3 py-2 tabular-nums text-slate-500 border border-slate-200">{nozzle.startIdx.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                                      <td className="px-3 py-2 tabular-nums text-slate-500 border border-slate-200">{nozzle.endIdx.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                                      <td className="px-3 py-2 font-black text-blue-700 border border-slate-200">{nozzle.liters.toFixed(2)} L</td>
+                                      <td className="px-3 py-2 text-slate-500 border border-slate-200">{nozzle.price.toFixed(2)}</td>
+                                      <td className="px-3 py-2 font-black text-green-700 border border-slate-200">{nozzle.amount.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</td>
+                                    </tr>
+                                  ))}
+                                  <tr className="bg-blue-50 font-black">
+                                    <td colSpan={3} className="px-3 py-1.5 text-[9px] uppercase text-blue-800 border border-slate-200">Total {pump.pumpName}</td>
+                                    <td className="px-3 py-1.5 text-blue-800 border border-slate-200">{pump.liters.toFixed(2)} L</td>
+                                    <td className="border border-slate-200" />
+                                    <td className="px-3 py-1.5 text-blue-800 border border-slate-200">{pump.revenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                        {/* Piste total */}
+                        <div className="px-4 py-2 bg-blue-50 flex justify-between border-t-2 border-blue-200">
+                          <span className="font-black text-blue-900 text-[11px] uppercase">Total Piste {piste.trackName}</span>
+                          <span className="font-black text-blue-900">{piste.liters.toFixed(2)} L — {piste.revenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</span>
+                        </div>
                       </div>
                     ))}
-                  </div>
-                  {/* Per-pompiste breakdown */}
-                  {b.pomps.length > 0 && (
-                    <div className="p-5">
-                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Détails par Pompiste</p>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              {["Pompiste","Litres","Recette","Espèces","Bons","Chèques","Décalage"].map(h => (
-                                <th key={h} className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-50">
-                            {b.pomps.map((p: any) => (
-                              <tr key={p.name} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="px-4 py-3">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-lg bg-blue-900 text-white flex items-center justify-center text-[9px] font-black">
-                                      {p.name.charAt(0)}
-                                    </div>
-                                    <span className="font-black text-blue-900 uppercase">{p.name}</span>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 font-black text-blue-800">{p.liters.toLocaleString()} L</td>
-                                <td className="px-4 py-3 font-black text-green-700">{p.revenue.toLocaleString()} DA</td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{p.cash.toLocaleString()} DA</td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{p.bons.toLocaleString()} DA</td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{p.cheques.toLocaleString()} DA</td>
-                                <td className="px-4 py-3">
-                                  <span className={cn("font-black text-sm", p.decalage >= 0 ? "text-green-600" : "text-red-600")}>
-                                    {p.decalage >= 0 ? "+" : ""}{p.decalage.toLocaleString()} DA
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+
+                    {/* Accounting info (décalage, cash received) */}
+                    {b.accounting && (
+                      <div className="grid grid-cols-3 gap-3 mt-2">
+                        <div className="p-3 bg-green-50 border border-green-200 rounded-xl text-center">
+                          <p className="text-[9px] font-black text-green-600 uppercase tracking-widest mb-1">Espèces Reçues</p>
+                          <p className="font-black text-green-800">{b.accounting.cashReceived.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                        </div>
+                        <div className={cn("p-3 rounded-xl border text-center",
+                          Math.abs(b.accounting.rest) < 1 ? "bg-green-50 border-green-200" : b.accounting.rest > 0 ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200"
+                        )}>
+                          <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">
+                            {Math.abs(b.accounting.rest) < 1 ? '✓ Soldé' : b.accounting.rest > 0 ? 'Reste' : 'Excédent'}
+                          </p>
+                          <p className={cn("font-black", Math.abs(b.accounting.rest) < 1 ? "text-green-700" : b.accounting.rest > 0 ? "text-red-700" : "text-yellow-700")}>
+                            {b.accounting.rest > 0 ? '+' : ''}{b.accounting.rest.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA
+                          </p>
+                        </div>
+                        <div className="p-3 bg-white border border-slate-200 rounded-xl text-center">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Dû</p>
+                          <p className="font-black text-blue-900">{b.accounting.totalDue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Décalages */}
+                    {b.decalageSummary && Object.keys(b.decalageSummary).length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Décalages</p>
+                        {Object.entries(b.decalageSummary).map(([pid, d]: [string, any]) => {
+                          const pompiste = pompistes.find(p => p.id === pid);
+                          if (Math.abs(d.money || 0) < 0.01) return null;
+                          return (
+                            <div key={pid} className={cn("flex items-center justify-between p-3 rounded-xl border",
+                              d.money < 0 ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200"
+                            )}>
+                              <span className="font-bold text-sm text-slate-700">{pompiste?.name || pid}</span>
+                              <div className="text-right">
+                                <span className={cn("font-black text-sm", d.money < 0 ? "text-red-700" : "text-yellow-700")}>
+                                  {d.money > 0 ? '+' : ''}{(d.money || 0).toFixed(2)} DA
+                                </span>
+                                <span className={cn("ml-2 text-[9px] font-black px-2 py-0.5 rounded-full",
+                                  d.money < 0 ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"
+                                )}>
+                                  {d.money < 0 ? 'BONUS' : 'RETENUE'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Brigade total row */}
+                    <div className="flex items-center justify-between p-4 rounded-xl"
+                         style={{ background: `linear-gradient(90deg, ${C.blue900}, ${C.blue800})` }}>
+                      <span className="font-black text-white uppercase tracking-widest text-sm">Total Brigade</span>
+                      <div className="text-right">
+                        <p className="font-black text-2xl" style={{ color: C.gold }}>
+                          {b.totalRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA
+                        </p>
+                        <p className="text-blue-300 text-[11px]">{b.totalLiters.toFixed(2)} L</p>
                       </div>
                     </div>
-                  )}
+                  </div>
                 </motion.div>
               ))}
             </div>
@@ -839,8 +1095,24 @@ const DailyReport = () => {
 
       <style>{`
         @media print {
-          body > * { display: none; }
-          .print-section { display: block !important; position: static !important; }
+          /* Isolate the report: hide everything visually, then reveal only the print section.
+             Using visibility (not display) keeps the report's own layout intact regardless
+             of how deeply it is nested inside the app shell. */
+          body * { visibility: hidden !important; }
+          .print-section, .print-section * { visibility: visible !important; }
+          .print-section {
+            position: absolute !important;
+            left: 0;
+            top: 0;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+          /* Print-only blocks (hidden on screen) */
+          .print-only { display: block !important; }
+          * { box-shadow: none !important; }
+          @page { margin: 1cm; }
         }
         h-13 { height: 3.25rem; }
       `}</style>

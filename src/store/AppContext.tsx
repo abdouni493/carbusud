@@ -1279,7 +1279,26 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'ADD_BRIGADE_ACCOUNTING': {
         const a = action.payload;
         await db.addBrigadeAccounting({ id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
-        if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: a.id, client_id: nz(j.clientId), amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        if (a.justifications?.length) await Promise.all(a.justifications.map(j => {
+          const isTPE = j.justificationType === 'TAG' || j.justificationType === 'TPE';
+          return db.addBrigadeAccountingJustification({
+            id: j.id,
+            accounting_id: a.id,
+            // For TAG/TPE there is no client — skip client_id so the (nullable) column stays null
+            ...(isTPE ? {} : { client_id: nz(j.clientId) }),
+            amount: j.amount,
+            client_type: j.clientType,
+            payment_mode: j.paymentMode,
+            notes: j.notes,
+            justification_type: j.justificationType || 'CLIENT',
+            client_name: nz(j.clientName),
+            fuel_type: nz(j.fuelType),
+            liters: j.liters || 0,
+            price_per_liter: j.pricePerLiter || 0,
+            track_id: nz(j.trackId),
+            pompiste_id: nz(j.pompisteId),
+          });
+        }));
         // Save any TAG/TPE justifications as tpe_transactions rows (Caisse TPE)
         {
           const tpeJustifs = a.justifications?.filter(j => j.justificationType === 'TAG' || j.justificationType === 'TPE') || [];
@@ -1338,7 +1357,26 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         await db.updateBrigadeAccounting(a.id, { brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
         // Re-sync justifications for this accounting (delete old, then re-insert)
         await supabase.from('brigade_accounting_justifications').delete().eq('accounting_id', a.id);
-        if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: a.id, client_id: nz(j.clientId), amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        if (a.justifications?.length) await Promise.all(a.justifications.map(j => {
+          const isTPE = j.justificationType === 'TAG' || j.justificationType === 'TPE';
+          return db.addBrigadeAccountingJustification({
+            id: j.id,
+            accounting_id: a.id,
+            // For TAG/TPE there is no client — skip client_id so the (nullable) column stays null
+            ...(isTPE ? {} : { client_id: nz(j.clientId) }),
+            amount: j.amount,
+            client_type: j.clientType,
+            payment_mode: j.paymentMode,
+            notes: j.notes,
+            justification_type: j.justificationType || 'CLIENT',
+            client_name: nz(j.clientName),
+            fuel_type: nz(j.fuelType),
+            liters: j.liters || 0,
+            price_per_liter: j.pricePerLiter || 0,
+            track_id: nz(j.trackId),
+            pompiste_id: nz(j.pompisteId),
+          });
+        }));
         // Re-sync TAG/TPE transactions for this accounting (delete old, then re-insert)
         await supabase.from('tpe_transactions').delete().eq('accounting_id', a.id);
         {
@@ -2252,6 +2290,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const assignRaw = await supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []);
         const accountingsRaw = await db.getBrigadeAccountings().catch(() => []);
         const brigadeAccountings = ((accountingsRaw as any[]) || []).map(mapBrigadeAccounting);
+
+        // Load justifications for all accountings in one query and attach to their accounting
+        if (brigadeAccountings.length > 0) {
+          const { data: justifRaw } = await supabase
+            .from('brigade_accounting_justifications')
+            .select('*');
+          ((justifRaw ?? []) as any[]).forEach((jr: any) => {
+            const acct = brigadeAccountings.find(a => a.id === jr.accounting_id);
+            if (!acct) return;
+            if (!acct.justifications) acct.justifications = [];
+            acct.justifications.push({
+              id: jr.id,
+              accountingId: jr.accounting_id,
+              clientId: jr.client_id || '',
+              amount: +jr.amount || 0,
+              clientType: jr.client_type,
+              paymentMode: jr.payment_mode,
+              notes: jr.notes,
+              justificationType: jr.justification_type || 'CLIENT',
+              clientName: jr.client_name,
+              fuelType: jr.fuel_type,
+              liters: +jr.liters || 0,
+              pricePerLiter: +jr.price_per_liter || 0,
+              trackId: jr.track_id,
+              pompisteId: jr.pompiste_id,
+            });
+          });
+        }
+
         return { brigades: (raw as any[]).map(b => { const m = mapBrigade(b); m.pompisteIds = (assignRaw as any[]).filter(a => a.brigade_id === b.id).map(a => a.pompiste_id); return m; }), brigadeAccountings };
       },
       fuel_sales: async () => {

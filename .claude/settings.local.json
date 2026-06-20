@@ -14,7 +14,8 @@
       "Bash(git commit --amend -m 'feat: persist decalage history, driver fields, client names + inline client creation' -m '- AppContext: save/reload pompiste_decalage_history on brigade accounting add/update and hydrate into each pompiste \\(fixes decalages lost on reload / MyPayments\\) *)",
       "Bash(git push *)",
       "PowerShell(npm run lint 2>&1)",
-      "PowerShell(git add .claude/settings.local.json)"
+      "PowerShell(git add .claude/settings.local.json)",
+      "PowerShell(git push)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Admin\\.claude"
