@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Settings as SettingsIcon,
@@ -21,23 +21,49 @@ import {
   ToggleLeft,
   RefreshCcw,
   ArrowRight,
+  CreditCard,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, litersFromDegrees } from "@/src/lib/utils";
 import { uploadFile, BUCKETS, db, supabase } from "../lib/supabase";
-import { useAppState, useAppDispatch } from "../store/AppContext";
+import { useAppState, useAppDispatch, TpeTransaction } from "../store/AppContext";
 import { useAuth } from "../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 
 const Settings = () => {
   const { t, i18n } = useTranslation();
-  const { settings, tanks } = useAppState();
+  const { settings, tanks, tpeTransactions, brigades, pompistes, tracks, brigadeAccountings, brigadeChefs } = useAppState();
   const dispatch = useAppDispatch();
   const state = useAppState();
   const navigate = useNavigate();
   const { userId } = useAuth();
 
   const [activeSection, setActiveSection] = useState("station");
+
+  // ── Caisse TPE state ────────────────────────────────────────────────────────
+  const [tpeFilter, setTpeFilter] = useState<'today' | 'month' | 'period'>('today');
+  const [tpePeriodStart, setTpePeriodStart] = useState(new Date().toISOString().split('T')[0]);
+  const [tpePeriodEnd, setTpePeriodEnd] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedTpeMode, setSelectedTpeMode] = useState<'ALL' | 'TAG' | 'TPE'>('ALL');
+  const [selectedTpeTx, setSelectedTpeTx] = useState<TpeTransaction | null>(null);
+
+  const filteredTpeTransactions = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const month = today.slice(0, 7);
+    return (tpeTransactions || []).filter(tx => {
+      const dateMatch = tpeFilter === 'today'
+        ? tx.date === today
+        : tpeFilter === 'month'
+        ? tx.date.startsWith(month)
+        : tx.date >= tpePeriodStart && tx.date <= tpePeriodEnd;
+      const modeMatch = selectedTpeMode === 'ALL' || tx.mode === selectedTpeMode;
+      return dateMatch && modeMatch;
+    }).sort((a, b) => b.date.localeCompare(a.date));
+  }, [tpeTransactions, tpeFilter, tpePeriodStart, tpePeriodEnd, selectedTpeMode]);
+
+  const tpeTotal = useMemo(() => filteredTpeTransactions.reduce((s, tx) => s + tx.amount, 0), [filteredTpeTransactions]);
+  const tpeTotalLiters = useMemo(() => filteredTpeTransactions.reduce((s, tx) => s + tx.liters, 0), [filteredTpeTransactions]);
+
   const [form, setForm] = useState(settings);
   const [selectedTankTable, setSelectedTankTable] = useState<string>(tanks[0]?.id || "");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -325,6 +351,7 @@ const Settings = () => {
     { id: "gauge", label: "Barèmes de Jauge", icon: TableIcon },
     { id: "paie", label: "Paramètres Paie", icon: DollarSign },
     { id: "appearance", label: "Apparence & Langue", icon: Palette },
+    { id: "tpe", label: "Caisse TPE", icon: CreditCard },
     { id: "backup", label: "Sauvegarde & Système", icon: Database },
   ];
 
@@ -1091,6 +1118,163 @@ const Settings = () => {
                         </button>
                       </div>
                     </div>
+                  </motion.div>
+                )}
+
+                {activeSection === "tpe" && (
+                  <motion.div key="tpe" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-6">
+                    {/* Header */}
+                    <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+                      <div className="h-5 w-1 rounded-full bg-gradient-to-b from-blue-900 to-yellow-400" />
+                      <CreditCard className="w-4 h-4 text-blue-900/60" />
+                      <h4 className="text-[11px] font-black text-blue-900 uppercase tracking-[0.3em]">Caisse TPE — Historique des Transactions</h4>
+                    </div>
+
+                    {/* Filter Bar */}
+                    <div className="flex flex-wrap gap-3 items-center">
+                      {/* Period filter */}
+                      <div className="flex gap-1 p-1 bg-slate-100 rounded-xl">
+                        {(['today', 'month', 'period'] as const).map(f => (
+                          <button key={f} onClick={() => setTpeFilter(f)}
+                            className={cn("px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all",
+                              tpeFilter === f ? "bg-blue-900 text-yellow-400" : "text-slate-500 hover:text-slate-700"
+                            )}>
+                            {f === 'today' ? "Aujourd'hui" : f === 'month' ? 'Ce Mois' : 'Période'}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Date pickers for period mode */}
+                      {tpeFilter === 'period' && (
+                        <div className="flex gap-2 items-center">
+                          <input type="date" value={tpePeriodStart} onChange={e => setTpePeriodStart(e.target.value)}
+                            className="px-3 py-2 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400" />
+                          <span className="text-slate-400 font-black">→</span>
+                          <input type="date" value={tpePeriodEnd} onChange={e => setTpePeriodEnd(e.target.value)}
+                            className="px-3 py-2 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400" />
+                        </div>
+                      )}
+
+                      {/* Mode filter */}
+                      <div className="flex gap-1 p-1 bg-slate-100 rounded-xl ml-auto">
+                        {(['ALL', 'TAG', 'TPE'] as const).map(m => (
+                          <button key={m} onClick={() => setSelectedTpeMode(m)}
+                            className={cn("px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all",
+                              selectedTpeMode === m ? "bg-amber-500 text-white" : "text-slate-500 hover:text-slate-700"
+                            )}>
+                            {m === 'ALL' ? 'Tous' : m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Totals Summary */}
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="p-5 rounded-2xl bg-gradient-to-br from-blue-900 to-blue-800 text-white text-center">
+                        <p className="text-[9px] font-black uppercase tracking-widest opacity-60 mb-1">Total Transactions</p>
+                        <p className="text-3xl font-black text-yellow-400">{filteredTpeTransactions.length}</p>
+                      </div>
+                      <div className="p-5 rounded-2xl bg-white border-2 border-blue-100 text-center">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Total Litres</p>
+                        <p className="text-3xl font-black text-blue-900">{tpeTotalLiters.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} L</p>
+                      </div>
+                      <div className="p-5 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 text-white text-center">
+                        <p className="text-[9px] font-black uppercase tracking-widest opacity-70 mb-1">Montant Total</p>
+                        <p className="text-3xl font-black">{tpeTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                      </div>
+                    </div>
+
+                    {/* Transaction List */}
+                    <div className="space-y-2">
+                      {filteredTpeTransactions.length === 0 && (
+                        <div className="text-center py-16 text-slate-300 font-black text-xs uppercase tracking-widest">
+                          Aucune transaction sur cette période
+                        </div>
+                      )}
+                      {filteredTpeTransactions.map(tx => {
+                        const brigade = brigades.find(b => b.id === tx.brigadeId);
+                        const pompiste = pompistes.find(p => p.id === tx.pompisteId);
+                        const track = tracks.find(t => t.id === tx.trackId);
+                        return (
+                          <button
+                            key={tx.id}
+                            onClick={() => setSelectedTpeTx(tx)}
+                            className="w-full p-4 bg-white rounded-2xl border border-slate-200 hover:border-blue-300 hover:shadow-md transition-all text-left flex items-center gap-4"
+                          >
+                            <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-sm font-black shrink-0",
+                              tx.mode === 'TPE' ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                            )}>
+                              {tx.mode === 'TPE' ? '💳' : '🏷️'}
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-black text-slate-800 text-sm">{tx.clientName || 'Client sans nom'}</p>
+                              <p className="text-[10px] text-slate-400">
+                                {brigade?.date} · {brigade?.shift} · {track?.name || tx.trackName || '—'} · {pompiste?.name || tx.pompisteName || '—'}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="font-black text-blue-900">{tx.amount.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                              <p className="text-[10px] text-slate-400">{tx.liters.toFixed(2)} L · {tx.fuelType}</p>
+                            </div>
+                            <span className={cn("px-2 py-1 rounded-full text-[9px] font-black uppercase shrink-0",
+                              tx.mode === 'TPE' ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700"
+                            )}>
+                              {tx.mode}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Detail Modal */}
+                    <AnimatePresence>
+                      {selectedTpeTx && (() => {
+                        const tx = selectedTpeTx;
+                        const brigade = brigades.find(b => b.id === tx.brigadeId);
+                        const pompiste = pompistes.find(p => p.id === tx.pompisteId);
+                        const track = tracks.find(t => t.id === tx.trackId);
+                        const brigadeChef = brigade?.chefId ? brigadeChefs?.find(c => c.id === brigade.chefId) : null;
+                        return (
+                          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+                              onClick={() => setSelectedTpeTx(null)} />
+                            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+                              className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md relative z-10 overflow-hidden">
+                              <div className="bg-gradient-to-r from-blue-900 to-blue-800 p-5 flex items-center justify-between">
+                                <div>
+                                  <p className="text-[9px] font-black text-blue-300 uppercase tracking-widest mb-1">Détails Transaction</p>
+                                  <h3 className="font-black text-white text-lg">{tx.mode === 'TPE' ? '💳 TPE' : '🏷️ Bon/Tag'}</h3>
+                                </div>
+                                <button onClick={() => setSelectedTpeTx(null)} className="p-2 hover:bg-white/20 rounded-xl text-white">
+                                  ✕
+                                </button>
+                              </div>
+                              <div className="p-6 space-y-4">
+                                {[
+                                  { label: 'Client', value: tx.clientName || 'Sans nom' },
+                                  { label: 'Date', value: tx.date },
+                                  { label: 'Brigade', value: brigade ? `${brigade.date} — ${brigade.shift}` : tx.brigadeId },
+                                  { label: 'Chef de Brigade', value: brigadeChef?.name || '—' },
+                                  { label: 'Piste', value: track?.name || tx.trackName || '—' },
+                                  { label: 'Pompiste', value: pompiste?.name || tx.pompisteName || '—' },
+                                  { label: 'Type Carburant', value: tx.fuelType },
+                                  { label: 'Litres', value: `${tx.liters.toFixed(2)} L` },
+                                  { label: 'Prix/Litre', value: `${tx.pricePerLiter.toFixed(2)} DA` },
+                                  { label: 'Montant Total', value: `${tx.amount.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA`, bold: true },
+                                ].map(row => (
+                                  <div key={row.label} className={cn("flex justify-between py-2 border-b border-slate-100",
+                                    (row as any).bold && "font-black text-blue-900")}>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{row.label}</span>
+                                    <span className={(row as any).bold ? "font-black text-blue-900 text-lg" : "font-bold text-slate-700 text-sm"}>{row.value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </motion.div>
+                          </div>
+                        );
+                      })()}
+                    </AnimatePresence>
                   </motion.div>
                 )}
 

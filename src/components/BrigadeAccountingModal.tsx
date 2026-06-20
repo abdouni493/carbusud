@@ -7,13 +7,20 @@ import {
 import { cn, newId } from "@/src/lib/utils";
 import {
   Brigade, Pump, Tank, Pompiste, BrigadeChef, PumpNozzle, StationSettings,
-  Client, Track, BrigadeAccounting, BrigadeAccountingJustification
+  Client, Track, BrigadeAccounting, BrigadeAccountingJustification, FuelType
 } from "../store/AppContext";
 
 interface Justification {
   id: string;
   clientId: string;
   amount: number;
+  justificationType: 'CLIENT' | 'TAG' | 'TPE';
+  clientName?: string;
+  fuelType?: string;
+  liters?: number;
+  pricePerLiter?: number;
+  trackId?: string;
+  pompisteId?: string;
 }
 
 interface Props {
@@ -53,8 +60,20 @@ const BrigadeAccountingModal: React.FC<Props> = ({
   // ── Step 4: financial ────────────────────────────────────────────────────────
   const [cashReceived, setCashReceived] = useState(existingAccounting?.cashReceived || 0);
   const [justifications, setJustifications] = useState<Justification[]>(
-    (existingAccounting?.justifications || []).map(j => ({ id: j.id, clientId: j.clientId, amount: j.amount }))
+    (existingAccounting?.justifications || []).map(j => ({
+      id: j.id, clientId: j.clientId, amount: j.amount,
+      justificationType: j.justificationType || 'CLIENT',
+      clientName: j.clientName, fuelType: j.fuelType, liters: j.liters,
+      pricePerLiter: j.pricePerLiter, trackId: j.trackId, pompisteId: j.pompisteId,
+    }))
   );
+  // TPE / Tag justification entry mode
+  const [justifMode, setJustifMode] = useState<'CLIENT' | 'TAG' | 'TPE'>('CLIENT');
+  const [tpeClientName, setTpeClientName] = useState('');
+  const [tpeFuelType, setTpeFuelType] = useState(Object.keys(settings.fuelPrices)[0] || 'SUPER');
+  const [tpeLiters, setTpeLiters] = useState<number | ''>('');
+  const [tpeTrackId, setTpeTrackId] = useState('');
+  const [tpePompisteId, setTpePompisteId] = useState('');
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
   const [currentClientAmount, setCurrentClientAmount] = useState<number | ''>('');
@@ -178,17 +197,46 @@ const BrigadeAccountingModal: React.FC<Props> = ({
 
   const addJustification = () => {
     if (!selectedClientId || !currentClientAmount || +currentClientAmount <= 0) return;
-    setJustifications(prev => [...prev, { id: newId(), clientId: selectedClientId, amount: +currentClientAmount }]);
+    setJustifications(prev => [...prev, { id: newId(), clientId: selectedClientId, amount: +currentClientAmount, justificationType: 'CLIENT' }]);
     setSelectedClientId('');
     setCurrentClientAmount('');
     setClientSearch('');
+  };
+
+  // ── TPE / Tag justification helpers ──────────────────────────────────────────
+  const tpePricePerLiter = useMemo(() => settings.fuelPrices[tpeFuelType as FuelType] || 0, [settings, tpeFuelType]);
+  const tpeAutoAmount = useMemo(() => (typeof tpeLiters === 'number' ? tpeLiters * tpePricePerLiter : 0), [tpeLiters, tpePricePerLiter]);
+
+  const addTpeJustification = () => {
+    if (!tpeLiters || +tpeLiters <= 0) return;
+    const amount = +tpeLiters * tpePricePerLiter;
+    setJustifications(prev => [...prev, {
+      id: newId(),
+      clientId: '',
+      clientName: tpeClientName || undefined,
+      amount,
+      justificationType: justifMode,
+      fuelType: tpeFuelType,
+      liters: +tpeLiters,
+      pricePerLiter: tpePricePerLiter,
+      trackId: tpeTrackId || undefined,
+      pompisteId: tpePompisteId || undefined,
+    }]);
+    setTpeClientName('');
+    setTpeLiters('');
   };
 
   // ── Save ─────────────────────────────────────────────────────────────────────
   const handleSave = () => {
     const justObjs: BrigadeAccountingJustification[] = justifications.map(j => {
       const client = clients.find(c => c.id === j.clientId);
-      return { id: j.id, accountingId: '', clientId: j.clientId, amount: j.amount, clientType: client?.type, paymentMode: client?.paymentMode };
+      return {
+        id: j.id, accountingId: '', clientId: j.clientId || '', amount: j.amount,
+        clientType: client?.type, paymentMode: client?.paymentMode,
+        justificationType: j.justificationType || 'CLIENT',
+        clientName: j.clientName, fuelType: j.fuelType, liters: j.liters,
+        pricePerLiter: j.pricePerLiter, trackId: j.trackId, pompisteId: j.pompisteId,
+      };
     });
 
     const accounting: BrigadeAccounting = {
@@ -212,6 +260,38 @@ const BrigadeAccountingModal: React.FC<Props> = ({
 
     const action = existingAccounting ? 'UPDATE_BRIGADE_ACCOUNTING' : 'ADD_BRIGADE_ACCOUNTING';
     dispatch({ type: action, payload: accounting });
+
+    // Reflect TAG/TPE justifications in the Caisse TPE store immediately
+    if (existingAccounting) {
+      // Drop any previous TPE rows for this accounting before re-adding
+      (existingAccounting.justifications || [])
+        .filter(j => j.justificationType === 'TAG' || j.justificationType === 'TPE')
+        .forEach(j => dispatch({ type: 'DELETE_TPE_TRANSACTION', payload: j.id }));
+    }
+    justifications
+      .filter(j => j.justificationType === 'TAG' || j.justificationType === 'TPE')
+      .forEach(j => {
+        const track = tracks.find(t => t.id === j.trackId);
+        const pompiste = pompistes.find(p => p.id === j.pompisteId);
+        dispatch({ type: 'ADD_TPE_TRANSACTION', payload: {
+          id: j.id,
+          brigadeId: brigade.id,
+          accountingId: accounting.id,
+          date: brigade.date,
+          mode: j.justificationType as 'TAG' | 'TPE',
+          clientName: j.clientName,
+          clientId: j.clientId || undefined,
+          fuelType: j.fuelType || '',
+          liters: j.liters || 0,
+          pricePerLiter: j.pricePerLiter || 0,
+          amount: j.amount,
+          trackId: j.trackId,
+          trackName: track?.name,
+          pompisteId: j.pompisteId,
+          pompisteName: pompiste?.name,
+          createdAt: new Date().toISOString(),
+        }});
+      });
 
     // Apply client debt/advance changes + record transaction history
     justifications.forEach(j => {
@@ -539,27 +619,132 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                   <p className="text-[11px] text-blue-300 mt-2">{nozzleData.reduce((s, d) => s + d.liters, 0).toFixed(2)} L vendus</p>
                 </div>
 
-                {/* Per-pompiste breakdown */}
-                <div className="space-y-2">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Détail par Pompiste</p>
+                {/* ─── Detailed breakdown: Piste → Pompes → Pistolets ─── */}
+                <div className="space-y-3">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Détail par Piste / Pompe / Pistolet</p>
+
                   {(brigade.pompisteAssignments || []).filter(a => a.present).map(assignment => {
                     const pompiste = pompistes.find(p => p.id === assignment.pompisteId);
+                    const track = tracks.find(t => t.id === assignment.trackId);
                     const trackPumps = pumps.filter(p => p.trackId === assignment.trackId);
-                    const pompisteNozzles = nozzleData.filter(d => trackPumps.some(p => p.id === d.pump?.id));
-                    const liters = pompisteNozzles.reduce((s, d) => s + d.liters, 0);
-                    const revenue = pompisteNozzles.reduce((s, d) => s + d.revenue, 0);
-                    if (!pompiste) return null;
+                    const pompisteTotalLiters = trackPumps.flatMap(pump =>
+                      nozzleData.filter(d => d.pump?.id === pump.id)
+                    ).reduce((s, d) => s + d.liters, 0);
+                    const pompisteRevenue = trackPumps.flatMap(pump =>
+                      nozzleData.filter(d => d.pump?.id === pump.id)
+                    ).reduce((s, d) => s + d.revenue, 0);
+                    const decalage = decalageByPompiste[assignment.pompisteId];
+
                     return (
-                      <div key={pompiste.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center gap-4">
-                        <div className="w-9 h-9 bg-blue-700 text-white rounded-xl flex items-center justify-center font-black text-sm">{pompiste.name[0]}</div>
-                        <div className="flex-1">
-                          <p className="font-black text-slate-800">{pompiste.name}</p>
-                          <p className="text-[10px] text-slate-500">{tracks.find(t => t.id === assignment.trackId)?.name} · {liters.toFixed(2)} L</p>
+                      <div key={assignment.pompisteId} className="rounded-2xl border-2 border-blue-200 overflow-hidden">
+                        {/* Piste Header / Pompiste summary */}
+                        <div className="px-5 py-3 bg-gradient-to-r from-blue-900 to-blue-800 flex items-center gap-3">
+                          <div className="w-9 h-9 bg-yellow-400 text-blue-900 rounded-xl flex items-center justify-center font-black text-sm shrink-0">
+                            {pompiste?.name[0] || '?'}
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-black text-white text-sm">{pompiste?.name || '—'}</p>
+                            <p className="text-[10px] text-blue-300">{track?.name || '—'}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-black text-yellow-400 text-lg">{pompisteRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                            <p className="text-[10px] text-blue-300">{pompisteTotalLiters.toFixed(2)} L</p>
+                          </div>
                         </div>
-                        <p className="font-black text-green-700">{revenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} MAD</p>
+
+                        {/* Per-Pompe breakdown */}
+                        <div className="p-4 space-y-3 bg-slate-50">
+                          {trackPumps.map(pump => {
+                            const pumpNozzles = nozzleData.filter(d => d.pump?.id === pump.id);
+                            const pumpLiters = pumpNozzles.reduce((s, d) => s + d.liters, 0);
+                            const pumpRevenue = pumpNozzles.reduce((s, d) => s + d.revenue, 0);
+                            if (pumpNozzles.length === 0) return null;
+                            return (
+                              <div key={pump.id} className="rounded-xl bg-white border border-slate-200 overflow-hidden">
+                                {/* Pump header */}
+                                <div className="px-4 py-2 bg-slate-100 flex items-center justify-between border-b border-slate-200">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-black text-slate-500 uppercase">🔧 {pump.name}</span>
+                                    <span className="text-[9px] px-2 py-0.5 bg-slate-200 rounded-full text-slate-600 font-bold">{pump.type}</span>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="font-black text-slate-700 text-sm">{pumpRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</span>
+                                    <span className="text-[10px] text-slate-400 ml-2">{pumpLiters.toFixed(2)} L</span>
+                                  </div>
+                                </div>
+
+                                {/* Per-Nozzle/Pistolet rows */}
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="bg-slate-50">
+                                      <th className="px-3 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-widest">Pistolet</th>
+                                      <th className="px-3 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase tracking-widest">Idx Début</th>
+                                      <th className="px-3 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase tracking-widest">Idx Fin</th>
+                                      <th className="px-3 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase tracking-widest">Litres</th>
+                                      <th className="px-3 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase tracking-widest">Montant</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {pumpNozzles.map(d => (
+                                      <tr key={d.nozzle.id}>
+                                        <td className="px-3 py-2 font-bold text-slate-700">⚡ {d.nozzle.name}</td>
+                                        <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">{d.startIdx.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">{d.endIdx.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                                        <td className="px-3 py-2 text-right font-black text-blue-700">{d.liters.toFixed(2)} L</td>
+                                        <td className="px-3 py-2 text-right font-black text-green-700">{d.revenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="bg-slate-100 font-black">
+                                      <td colSpan={3} className="px-3 py-2 text-[10px] uppercase text-slate-500">Total Pompe {pump.name}</td>
+                                      <td className="px-3 py-2 text-right text-blue-800">{pumpLiters.toFixed(2)} L</td>
+                                      <td className="px-3 py-2 text-right text-green-800">{pumpRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+                            );
+                          })}
+
+                          {/* Piste total + décalage */}
+                          <div className="flex items-center justify-between px-4 py-3 bg-blue-50 rounded-xl border border-blue-200">
+                            <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest">Total Piste {track?.name}</span>
+                            <div className="text-right">
+                              <p className="font-black text-blue-900">{pompisteRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                              <p className="text-[10px] text-blue-500">{pompisteTotalLiters.toFixed(2)} L</p>
+                            </div>
+                          </div>
+
+                          {/* Décalage indicator */}
+                          {decalage && Math.abs(decalage.money) > 0.01 && (
+                            <div className={cn("flex items-center justify-between px-4 py-2 rounded-xl border",
+                              decalage.money < 0 ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200"
+                            )}>
+                              <span className={cn("text-[10px] font-black uppercase", decalage.money < 0 ? "text-red-700" : "text-yellow-700")}>
+                                {decalage.money < 0 ? '📉 Décalage (Retenue)' : '📈 Décalage (Bonus)'}
+                              </span>
+                              <div className="text-right">
+                                <p className={cn("font-black", decalage.money < 0 ? "text-red-700" : "text-yellow-700")}>
+                                  {decalage.money > 0 ? '+' : ''}{decalage.money.toFixed(2)} DA
+                                </p>
+                                <p className="text-[10px] text-slate-400">{decalage.liters > 0 ? '+' : ''}{decalage.liters.toFixed(2)} L</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
+
+                  {/* Grand total row */}
+                  <div className="flex items-center justify-between p-5 bg-gradient-to-r from-blue-900 to-blue-800 rounded-2xl">
+                    <span className="font-black text-white uppercase tracking-widest text-sm">Total Général Brigade</span>
+                    <div className="text-right">
+                      <p className="font-black text-yellow-400 text-2xl">{totalRevenue.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                      <p className="text-blue-300 text-[11px]">{nozzleData.reduce((s, d) => s + d.liters, 0).toFixed(2)} L vendus</p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Cash received */}
@@ -571,72 +756,202 @@ const BrigadeAccountingModal: React.FC<Props> = ({
                     onChange={e => setCashReceived(parseFloat(e.target.value) || 0)} />
                 </div>
 
-                {/* Client justifications */}
-                <div className="space-y-3">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justification par Clients</p>
+                {/* ─── Justification Mode Selector ─── */}
+                <div className="space-y-4">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justification du Reste</p>
 
-                  {/* Client search */}
-                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-200 space-y-3">
-                    <div className="flex gap-2 items-center">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                        <input type="text" placeholder="Rechercher un client..." value={clientSearch}
-                          onChange={e => { setClientSearch(e.target.value); setSelectedClientId(''); }}
-                          className="w-full pl-9 pr-4 py-2.5 border border-blue-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
-                      </div>
+                  {/* Mode tabs */}
+                  <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl">
+                    {(['CLIENT', 'TAG', 'TPE'] as const).map(mode => (
                       <button
-                        onClick={() => setShowCreateClientModal(true)}
-                        className="flex items-center gap-1.5 px-3 py-2.5 bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-800 transition-colors shrink-0"
+                        key={mode}
+                        onClick={() => setJustifMode(mode)}
+                        className={cn(
+                          "flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all",
+                          justifMode === mode
+                            ? "bg-blue-900 text-yellow-400 shadow-sm"
+                            : "text-slate-500 hover:text-slate-700"
+                        )}
                       >
-                        <Plus className="w-3.5 h-3.5" /> Nouveau Client
+                        {mode === 'CLIENT' ? '👤 Client' : mode === 'TAG' ? '🏷️ Bon/Tag' : '💳 TPE'}
                       </button>
-                    </div>
-                    {clientSearch && (
-                      <div className="space-y-1">
-                        {filteredClients.map(c => (
-                          <button key={c.id} onClick={() => { setSelectedClientId(c.id); setClientSearch(c.name); }}
-                            className={cn("w-full px-3 py-2 text-left rounded-lg text-sm font-bold transition-colors", selectedClientId === c.id ? "bg-blue-200 text-blue-900" : "hover:bg-blue-100 text-slate-700")}>
-                            {c.name} <span className="text-[10px] text-slate-400 ml-2">{c.type} · {c.paymentMode}</span>
-                          </button>
-                        ))}
-                        {filteredClients.length === 0 && <p className="text-xs text-slate-400 px-3">Aucun client trouvé</p>}
-                      </div>
-                    )}
-                    {selectedClientId && (
-                      <div className="flex gap-2 items-center">
-                        <input type="number" step="0.01" placeholder="Montant (MAD)"
-                          className="flex-1 px-3 py-2.5 border border-blue-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                          value={currentClientAmount}
-                          onChange={e => setCurrentClientAmount(parseFloat(e.target.value) || '')} />
-                        <button onClick={addJustification}
-                          className="px-4 py-2.5 bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-800 transition-colors flex items-center gap-1">
-                          <Plus className="w-3.5 h-3.5" /> Ajouter
-                        </button>
-                      </div>
-                    )}
+                    ))}
                   </div>
 
-                  {/* Justification list */}
+                  {/* CLIENT mode — existing search UI */}
+                  {justifMode === 'CLIENT' && (
+                    <div className="p-4 bg-blue-50 rounded-2xl border border-blue-200 space-y-3">
+                      <div className="flex gap-2 items-center">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                          <input type="text" placeholder="Rechercher un client..." value={clientSearch}
+                            onChange={e => { setClientSearch(e.target.value); setSelectedClientId(''); }}
+                            className="w-full pl-9 pr-4 py-2.5 border border-blue-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+                        </div>
+                        <button
+                          onClick={() => setShowCreateClientModal(true)}
+                          className="flex items-center gap-1.5 px-3 py-2.5 bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-800 transition-colors shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Nouveau Client
+                        </button>
+                      </div>
+                      {clientSearch && (
+                        <div className="space-y-1">
+                          {filteredClients.map(c => (
+                            <button key={c.id} onClick={() => { setSelectedClientId(c.id); setClientSearch(c.name); }}
+                              className={cn("w-full px-3 py-2 text-left rounded-lg text-sm font-bold transition-colors", selectedClientId === c.id ? "bg-blue-200 text-blue-900" : "hover:bg-blue-100 text-slate-700")}>
+                              {c.name} <span className="text-[10px] text-slate-400 ml-2">{c.type} · {c.paymentMode}</span>
+                            </button>
+                          ))}
+                          {filteredClients.length === 0 && <p className="text-xs text-slate-400 px-3">Aucun client trouvé</p>}
+                        </div>
+                      )}
+                      {selectedClientId && (
+                        <div className="flex gap-2 items-center">
+                          <input type="number" step="0.01" placeholder="Montant (DA)"
+                            className="flex-1 px-3 py-2.5 border border-blue-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                            value={currentClientAmount}
+                            onChange={e => setCurrentClientAmount(parseFloat(e.target.value) || '')} />
+                          <button onClick={addJustification}
+                            className="px-4 py-2.5 bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-800 transition-colors flex items-center gap-1">
+                            <Plus className="w-3.5 h-3.5" /> Ajouter
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAG / TPE mode — fuel-based form */}
+                  {(justifMode === 'TAG' || justifMode === 'TPE') && (
+                    <div className="p-4 bg-amber-50 rounded-2xl border-2 border-amber-200 space-y-3">
+                      <p className="text-[10px] font-black text-amber-900 uppercase tracking-widest">
+                        {justifMode === 'TAG' ? 'Bon / Tag' : 'Transaction TPE'}
+                      </p>
+
+                      {/* Optional client name */}
+                      <div>
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Nom du Client (optionnel)</label>
+                        <input
+                          type="text"
+                          placeholder="Nom du client..."
+                          value={tpeClientName}
+                          onChange={e => setTpeClientName(e.target.value)}
+                          className="w-full px-3 py-2.5 border border-amber-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        />
+                      </div>
+
+                      {/* Fuel type selector */}
+                      <div>
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Type Carburant</label>
+                        <select
+                          value={tpeFuelType}
+                          onChange={e => setTpeFuelType(e.target.value)}
+                          className="w-full px-3 py-2.5 border border-amber-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                        >
+                          {Object.entries(settings.fuelPrices).map(([type, price]) => (
+                            <option key={type} value={type}>{type} — {Number(price).toFixed(2)} DA/L</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Liters input with auto-calculated total */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Quantité (Litres)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={tpeLiters}
+                            onChange={e => setTpeLiters(parseFloat(e.target.value) || '')}
+                            className="w-full px-3 py-2.5 border border-amber-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Montant Calculé</label>
+                          <div className="px-3 py-2.5 bg-amber-100 border-2 border-amber-300 rounded-xl">
+                            <span className="font-black text-amber-900">{tpeAutoAmount.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Optional: which track/pompiste */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Piste (optionnel)</label>
+                          <select
+                            value={tpeTrackId}
+                            onChange={e => setTpeTrackId(e.target.value)}
+                            className="w-full px-3 py-2.5 border border-amber-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                          >
+                            <option value="">— Toutes les pistes —</option>
+                            {tracks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Pompiste (optionnel)</label>
+                          <select
+                            value={tpePompisteId}
+                            onChange={e => setTpePompisteId(e.target.value)}
+                            className="w-full px-3 py-2.5 border border-amber-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                          >
+                            <option value="">— Tous les pompistes —</option>
+                            {pompistes.filter(p => brigade.pompisteIds?.includes(p.id)).map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={addTpeJustification}
+                        disabled={!tpeLiters || +tpeLiters <= 0}
+                        className="w-full py-2.5 bg-amber-500 disabled:opacity-50 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Ajouter {justifMode === 'TAG' ? 'Bon/Tag' : 'Transaction TPE'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Combined justification list (all types) */}
                   {justifications.map(j => {
                     const client = clients.find(c => c.id === j.clientId);
+                    const isTPE = j.justificationType === 'TPE' || j.justificationType === 'TAG';
                     return (
-                      <div key={j.id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200">
-                        <div className="flex-1">
-                          <p className="font-black text-slate-800 text-sm">{client?.name || j.clientId}</p>
-                          <p className="text-[10px] text-slate-400">{client?.type} · {client?.paymentMode}</p>
+                      <div key={j.id} className={cn(
+                        "flex items-center gap-3 p-3 rounded-xl border",
+                        isTPE ? "bg-amber-50 border-amber-200" : "bg-white border-slate-200"
+                      )}>
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black shrink-0"
+                          style={{ background: isTPE ? '#f59e0b20' : '#dbeafe', color: isTPE ? '#b45309' : '#1e40af' }}>
+                          {j.justificationType === 'TPE' ? '💳' : j.justificationType === 'TAG' ? '🏷️' : '👤'}
                         </div>
-                        <p className="font-black text-blue-700">{j.amount.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} MAD</p>
-                        <button onClick={() => setJustifications(prev => prev.filter(x => x.id !== j.id))}
-                          className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors">
+                        <div className="flex-1">
+                          <p className="font-black text-slate-800 text-sm">
+                            {isTPE ? (j.clientName || `Sans nom · ${j.fuelType}`) : (client?.name || j.clientId)}
+                          </p>
+                          {isTPE ? (
+                            <p className="text-[10px] text-slate-400">{j.liters?.toFixed(2)} L × {j.pricePerLiter?.toFixed(2)} DA/L</p>
+                          ) : (
+                            <p className="text-[10px] text-slate-400">{client?.type} · {client?.paymentMode}</p>
+                          )}
+                        </div>
+                        <p className="font-black text-blue-700">{j.amount.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</p>
+                        <button
+                          onClick={() => setJustifications(prev => prev.filter(x => x.id !== j.id))}
+                          className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 transition-colors"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     );
                   })}
+
                   {justifications.length > 0 && (
                     <div className="flex justify-between px-3 pt-2 border-t border-slate-100">
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total justifié</span>
-                      <span className="font-black text-blue-700">{justifiedTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} MAD</span>
+                      <span className="font-black text-blue-700">{justifiedTotal.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</span>
                     </div>
                   )}
                 </div>

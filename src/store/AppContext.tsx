@@ -250,6 +250,33 @@ export interface BrigadeAccountingJustification {
   clientType?: string;
   paymentMode?: string;
   notes?: string;
+  justificationType?: 'CLIENT' | 'TAG' | 'TPE'; // default 'CLIENT'
+  clientName?: string;    // optional free-text name for TAG/TPE
+  fuelType?: string;      // e.g. 'SUPER', 'DIESEL'
+  liters?: number;        // how many liters
+  pricePerLiter?: number; // auto-filled from settings
+  trackId?: string;       // which piste (track)
+  pompisteId?: string;    // which pompiste
+}
+
+export interface TpeTransaction {
+  id: string;
+  brigadeId: string;
+  accountingId?: string;
+  date: string;
+  mode: 'TAG' | 'TPE';
+  clientName?: string;
+  clientId?: string;
+  fuelType: string;
+  liters: number;
+  pricePerLiter: number;
+  amount: number;
+  trackId?: string;
+  trackName?: string;
+  pompisteId?: string;
+  pompisteName?: string;
+  notes?: string;
+  createdAt: string;
 }
 
 export interface BrigadeAccounting {
@@ -642,6 +669,7 @@ export interface AppState {
   brigadeChefs: BrigadeChef[];
   brigades: Brigade[];
   brigadeAccountings: BrigadeAccounting[];
+  tpeTransactions: TpeTransaction[];
   clients: Client[];
   suppliers: Supplier[];
   products: Product[];
@@ -686,6 +714,7 @@ const emptySettings: StationSettings = {
 
 const initialState: AppState = {
   tanks: [], pumps: [], pumpNozzles: [], tracks: [], pompistes: [], brigadeChefs: [], brigades: [], brigadeAccountings: [],
+  tpeTransactions: [],
   clients: [], suppliers: [], products: [], expenses: [], deliveryNotes: [],
   fuelInvoices: [], fuelReceipts: [],
   purchases: [], fuelSales: [], shopSales: [], inventories: [], dailyReports: [],
@@ -794,6 +823,9 @@ type AppAction =
   | { type: 'SET_CURRENT_USER'; payload: { role: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; id?: string; name?: string; avatarUrl?: string; permissions?: UserPermissions } }
   | { type: 'ADD_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
   | { type: 'UPDATE_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
+  | { type: 'ADD_TPE_TRANSACTION'; payload: TpeTransaction }
+  | { type: 'DELETE_TPE_TRANSACTION'; payload: string }
+  | { type: 'SET_TPE_TRANSACTIONS'; payload: TpeTransaction[] }
   | { type: 'RESTORE_STATE'; payload: AppState };
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
@@ -993,6 +1025,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'ADD_BRIGADE_ACCOUNTING':    return { ...state, brigadeAccountings: [...state.brigadeAccountings, action.payload] };
     case 'UPDATE_BRIGADE_ACCOUNTING': return { ...state, brigadeAccountings: state.brigadeAccountings.map(a => a.id === action.payload.id ? action.payload : a) };
 
+    case 'ADD_TPE_TRANSACTION':
+      return { ...state, tpeTransactions: [...(state.tpeTransactions || []), action.payload] };
+    case 'DELETE_TPE_TRANSACTION':
+      return { ...state, tpeTransactions: (state.tpeTransactions || []).filter(t => t.id !== action.payload) };
+    case 'SET_TPE_TRANSACTIONS':
+      return { ...state, tpeTransactions: action.payload };
+
     case 'MARK_PAYMENT_PAID': {
       const { workerType, workerId, paymentId } = action.payload;
       const upd = (rec: any[]) => rec.map(p => p.id === paymentId ? { ...p, isPaid: true } : p);
@@ -1066,6 +1105,16 @@ function mapBrigadeAccounting(r: any): BrigadeAccounting {
     nozzleVerifications: r.nozzle_verifications || {}, restAssignedWorkerType: r.rest_assigned_worker_type,
     restAssignedWorkerId: r.rest_assigned_worker_id, restAssignedAmount: +r.rest_assigned_amount || 0,
     status: r.status || 'draft', createdBy: r.created_by, justifications: [],
+  };
+}
+function mapTpeTransaction(r: any): TpeTransaction {
+  return {
+    id: r.id, brigadeId: r.brigade_id, accountingId: r.accounting_id, date: r.date,
+    mode: r.mode, clientName: r.client_name, clientId: r.client_id,
+    fuelType: r.fuel_type, liters: +r.liters || 0, pricePerLiter: +r.price_per_liter || 0,
+    amount: +r.amount || 0, trackId: r.track_id, trackName: r.track_name,
+    pompisteId: r.pompiste_id, pompisteName: r.pompiste_name, notes: r.notes,
+    createdAt: r.created_at,
   };
 }
 function mapFuelSale(r: any): FuelSale {
@@ -1230,7 +1279,30 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'ADD_BRIGADE_ACCOUNTING': {
         const a = action.payload;
         await db.addBrigadeAccounting({ id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
-        if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: j.accountingId, client_id: j.clientId, amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: a.id, client_id: nz(j.clientId), amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        // Save any TAG/TPE justifications as tpe_transactions rows (Caisse TPE)
+        {
+          const tpeJustifs = a.justifications?.filter(j => j.justificationType === 'TAG' || j.justificationType === 'TPE') || [];
+          if (tpeJustifs.length) {
+            await Promise.all(tpeJustifs.map(j =>
+              supabase.from('tpe_transactions').insert({
+                id: j.id,
+                brigade_id: a.brigadeId,
+                accounting_id: a.id,
+                date: new Date().toISOString().split('T')[0],
+                mode: j.justificationType,
+                client_name: nz(j.clientName),
+                client_id: nz(j.clientId),
+                fuel_type: j.fuelType,
+                liters: j.liters || 0,
+                price_per_liter: j.pricePerLiter || 0,
+                amount: j.amount,
+                track_id: nz(j.trackId),
+                pompiste_id: nz(j.pompisteId),
+              })
+            ));
+          }
+        }
         // Save décalage history entries for each pompiste that has a décalage
         if (a.decalageSummary && Object.keys(a.decalageSummary).length > 0) {
           const decalagePromises = Object.entries(a.decalageSummary).map(([pompisteId, d]: [string, any]) => {
@@ -1264,6 +1336,33 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'UPDATE_BRIGADE_ACCOUNTING': {
         const a = action.payload;
         await db.updateBrigadeAccounting(a.id, { brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
+        // Re-sync justifications for this accounting (delete old, then re-insert)
+        await supabase.from('brigade_accounting_justifications').delete().eq('accounting_id', a.id);
+        if (a.justifications?.length) await Promise.all(a.justifications.map(j => db.addBrigadeAccountingJustification({ id: j.id, accounting_id: a.id, client_id: nz(j.clientId), amount: j.amount, client_type: j.clientType, payment_mode: j.paymentMode, notes: j.notes })));
+        // Re-sync TAG/TPE transactions for this accounting (delete old, then re-insert)
+        await supabase.from('tpe_transactions').delete().eq('accounting_id', a.id);
+        {
+          const tpeJustifs = a.justifications?.filter(j => j.justificationType === 'TAG' || j.justificationType === 'TPE') || [];
+          if (tpeJustifs.length) {
+            await Promise.all(tpeJustifs.map(j =>
+              supabase.from('tpe_transactions').insert({
+                id: j.id,
+                brigade_id: a.brigadeId,
+                accounting_id: a.id,
+                date: new Date().toISOString().split('T')[0],
+                mode: j.justificationType,
+                client_name: nz(j.clientName),
+                client_id: nz(j.clientId),
+                fuel_type: j.fuelType,
+                liters: j.liters || 0,
+                price_per_liter: j.pricePerLiter || 0,
+                amount: j.amount,
+                track_id: nz(j.trackId),
+                pompiste_id: nz(j.pompisteId),
+              })
+            ));
+          }
+        }
         // Re-sync décalage history for this brigade (delete old, then re-insert)
         await supabase.from('pompiste_decalage_history').delete().eq('brigade_id', a.brigadeId);
         if (a.decalageSummary && Object.keys(a.decalageSummary).length > 0) {
@@ -2078,6 +2177,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           return m;
         });
 
+        // Caisse TPE — TAG/TPE transactions
+        const tpeRaw = await safeQ('TPE Transactions', async () => {
+          const { data, error } = await supabase.from('tpe_transactions').select('*').order('date', { ascending: false });
+          if (error) throw error; return data ?? [];
+        });
+        const tpeTransactions = (tpeRaw as any[]).map(mapTpeTransaction);
+
         if (cancelled) return;
 
         dispatch({
@@ -2086,6 +2192,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             fuelSales, shopSales, deliveryNotes, purchases,
             fuelInvoices, fuelReceipts,
             expenses, inventories, dailyReports,
+            tpeTransactions,
             pompistes:       pompistesWithPayroll,
             brigadeChefs:    brigadeChefWithPayroll,
             gerants:         gerantsWithPayroll,
