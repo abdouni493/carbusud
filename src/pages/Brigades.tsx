@@ -98,6 +98,30 @@ const Brigades = () => {
   const [filterChef, setFilterChef] = useState('');
   const [filterPompiste, setFilterPompiste] = useState('');
   const [searchId, setSearchId] = useState('');
+  const [filterDate, setFilterDate] = useState('');        // exact day (YYYY-MM-DD)
+  const [filterStartDate, setFilterStartDate] = useState(''); // période — du
+  const [filterEndDate, setFilterEndDate] = useState('');     // période — au
+
+  // Shared brigade history filter predicate (id / chef / pompiste / date / période).
+  // b.date is 'YYYY-MM-DD' so string comparison is chronologically correct.
+  const matchesBrigadeFilters = (b: Brigade) => {
+    if (searchId && !b.id.toLowerCase().includes(searchId.toLowerCase())) return false;
+    if (filterChef && b.chefId !== filterChef) return false;
+    if (filterPompiste && !b.pompisteIds?.includes(filterPompiste)) return false;
+    const d = b.date || '';
+    if (filterDate) {
+      if (d !== filterDate) return false;            // exact date overrides the période
+    } else {
+      if (filterStartDate && d < filterStartDate) return false;
+      if (filterEndDate && d > filterEndDate) return false;
+    }
+    return true;
+  };
+  const hasActiveFilters = !!(filterChef || filterPompiste || searchId || filterDate || filterStartDate || filterEndDate);
+  const clearBrigadeFilters = () => {
+    setFilterChef(''); setFilterPompiste(''); setSearchId('');
+    setFilterDate(''); setFilterStartDate(''); setFilterEndDate('');
+  };
   
   const [step, setStep] = useState(1);
   const [chefId, setChefId] = useState("");
@@ -698,7 +722,7 @@ const Brigades = () => {
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap gap-3 items-center">
+      <div className="flex flex-wrap gap-3 items-end">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input placeholder="🔍 Rechercher par ID..." value={searchId} onChange={e => setSearchId(e.target.value)}
@@ -714,20 +738,38 @@ const Brigades = () => {
           <option value="">Tous les Pompistes</option>
           {pompistes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        {(filterChef || filterPompiste || searchId) && (
-          <button onClick={() => { setFilterChef(''); setFilterPompiste(''); setSearchId(''); }}
-            className="text-xs text-red-500 font-bold hover:underline">✕ Effacer filtres</button>
+
+        {/* Date exacte */}
+        <div className="flex flex-col">
+          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 ml-1">Date exacte</label>
+          <input type="date" value={filterDate}
+            onChange={e => { setFilterDate(e.target.value); if (e.target.value) { setFilterStartDate(''); setFilterEndDate(''); } }}
+            className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-bold focus:border-yellow-400 outline-none bg-white disabled:opacity-50" />
+        </div>
+
+        {/* Période Du → Au */}
+        <div className="flex flex-col">
+          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 ml-1">Période — Du</label>
+          <input type="date" value={filterStartDate} disabled={!!filterDate}
+            onChange={e => setFilterStartDate(e.target.value)}
+            className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-bold focus:border-yellow-400 outline-none bg-white disabled:opacity-50 disabled:cursor-not-allowed" />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 ml-1">Au</label>
+          <input type="date" value={filterEndDate} disabled={!!filterDate} min={filterStartDate || undefined}
+            onChange={e => setFilterEndDate(e.target.value)}
+            className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-bold focus:border-yellow-400 outline-none bg-white disabled:opacity-50 disabled:cursor-not-allowed" />
+        </div>
+
+        {hasActiveFilters && (
+          <button onClick={clearBrigadeFilters}
+            className="px-3 py-2.5 text-xs text-red-500 font-black hover:underline self-end">✕ Effacer filtres</button>
         )}
       </div>
 
       {/* Vue Gérant — désactivée, gérée par le bloc unifié ci-dessous */}
       {false && (() => {
-        const filteredBrigades = [...brigades].reverse().filter(b => {
-          if (searchId && !b.id.toLowerCase().includes(searchId.toLowerCase())) return false;
-          if (filterChef && b.chefId !== filterChef) return false;
-          if (filterPompiste && !b.pompisteIds?.includes(filterPompiste)) return false;
-          return true;
-        });
+        const filteredBrigades = [...brigades].reverse().filter(matchesBrigadeFilters);
         return (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -871,14 +913,22 @@ const Brigades = () => {
 
       {/* Grille de Brigades — toutes les rôles */}
       {(() => {
-        const filteredBrigades = [...brigades].reverse().filter(b => {
-          if (searchId && !b.id.toLowerCase().includes(searchId.toLowerCase())) return false;
-          if (filterChef && b.chefId !== filterChef) return false;
-          if (filterPompiste && !b.pompisteIds?.includes(filterPompiste)) return false;
-          return true;
-        });
+        const filteredBrigades = [...brigades].reverse().filter(matchesBrigadeFilters);
         return (
         <div className="space-y-6">
+          {/* Result count + active date/période summary */}
+          <div className="flex items-center justify-between flex-wrap gap-2 px-1">
+            <p className="text-xs font-black uppercase tracking-widest text-slate-400">
+              {filteredBrigades.length} brigade{filteredBrigades.length !== 1 ? 's' : ''}{hasActiveFilters ? ' (filtrées)' : ''}
+            </p>
+            {(filterDate || filterStartDate || filterEndDate) && (
+              <span className="px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[10px] font-black text-blue-700 uppercase tracking-wider">
+                {filterDate
+                  ? `📅 ${filterDate}`
+                  : `📅 ${filterStartDate || '…'} → ${filterEndDate || '…'}`}
+              </span>
+            )}
+          </div>
           {filteredBrigades.length > 0 ? (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredBrigades.map((b, index) => {
@@ -1116,9 +1166,11 @@ const Brigades = () => {
             <div className="card-glass overflow-hidden shadow-xl border-slate-50">
               <EmptyState
                 icon={Users}
-                title="Aucune brigade"
-                description="L'historique est vide pour le moment"
-                {...(currentUserRole !== 'gerant' ? { actionLabel: "Ouvrir Brigade", action: () => { setStep(1); setShowModal(true); } } : {})}
+                title={hasActiveFilters ? "Aucun résultat" : "Aucune brigade"}
+                description={hasActiveFilters ? "Aucune brigade ne correspond aux filtres sélectionnés" : "L'historique est vide pour le moment"}
+                {...(hasActiveFilters
+                  ? { actionLabel: "✕ Effacer filtres", action: clearBrigadeFilters }
+                  : (currentUserRole !== 'gerant' ? { actionLabel: "Ouvrir Brigade", action: () => { setStep(1); setShowModal(true); } } : {}))}
               />
             </div>
           )}
