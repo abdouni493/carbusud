@@ -112,6 +112,12 @@ export interface ExportPdfOptions {
   header?: string;
   /** Capture resolution multiplier (default 2). */
   scale?: number;
+  /**
+   * Page-fitting strategy:
+   *  - "paginate" (default): slice the capture across as many A4 pages as needed.
+   *  - "single": scale the whole capture down to fit a single A4 page.
+   */
+  fit?: "paginate" | "single";
 }
 
 /**
@@ -151,6 +157,29 @@ export async function exportElementToPdf(
     const contentW = pageW - margin * 2;
     const contentH = pageH - margin * 2 - headerH;
     const fullImgH = (canvas.height * contentW) / canvas.width;
+
+    // ── Single-page mode: scale the whole capture to fit one A4 page ──────────
+    if (opts.fit === "single") {
+      if (opts.header) {
+        pdf.setFillColor(0, 18, 51);
+        pdf.rect(0, 0, pageW, headerH, "F");
+        pdf.setTextColor(255, 184, 0);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(opts.header, margin, headerH - 4);
+      }
+      let drawW = contentW;
+      let drawH = fullImgH;
+      if (drawH > contentH) {
+        const ratio = contentH / drawH;
+        drawH = contentH;
+        drawW = contentW * ratio;
+      }
+      const offsetX = margin + (contentW - drawW) / 2;
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", offsetX, margin + headerH, drawW, drawH);
+      pdf.save(filename);
+      return true;
+    }
 
     let consumed = 0; // mm of the full image already placed
     let page = 0;

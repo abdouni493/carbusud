@@ -415,7 +415,7 @@ const DailyReport = () => {
     const ok = await exportElementToPdf(
       ficheRef.current,
       `Fiche_Journaliere_${startDate}_${endDate}.pdf`,
-      { header: `${settings.name || 'Station'} — Fiche Journalière — ${startDate} → ${endDate}`, scale: 2 }
+      { scale: 2, fit: 'single' }
     );
     setIsPdfLoading(false);
     if (!ok) alert("Échec de la génération du PDF. Réessayez ou utilisez Imprimer → Enregistrer en PDF.");
@@ -1272,68 +1272,89 @@ const DailyReport = () => {
       {isGenerated && reportData && (() => {
         const f = reportData.fiche;
         const justifItems = [
-          { label: 'Total TPE', value: f.justifByType.TPE, color: '#0e7490' },
-          { label: 'Total Tags / Bons', value: f.justifByType.TAG, color: '#7c3aed' },
-          { label: 'Total Crédit Client (dette)', value: f.justifByType.CREDIT, color: '#ea580c' },
-          { label: 'Total Avance Client', value: f.justifByType.AVANCE, color: '#0d9488' },
+          { label: 'TPE', value: f.justifByType.TPE, color: '#0e7490' },
+          { label: 'Tags / Bons', value: f.justifByType.TAG, color: '#7c3aed' },
+          { label: 'Crédit client', value: f.justifByType.CREDIT, color: '#ea580c' },
+          { label: 'Avance client', value: f.justifByType.AVANCE, color: '#0d9488' },
         ].filter(j => Math.abs(j.value) > 0.001);
+        const venteTotale = f.fuelTotals.selling + f.shopTotals.selling;
+        const beneficeNet = f.fuelTotals.gain + f.shopTotals.gain - f.allExpenseTotal;
+
+        // Compact shared primitives ------------------------------------------------
         const TH = ({ children, align }: any) => (
-          <th style={{ padding: '8px 10px', textAlign: align || 'left', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, border: '1px solid #1e3a8a', color: '#fff' }}>{children}</th>
+          <th style={{ padding: '3px 6px', textAlign: align || 'left', fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.3, color: '#fff' }}>{children}</th>
         );
         const TD = ({ children, align, bold, color }: any) => (
-          <td style={{ padding: '7px 10px', textAlign: align || 'left', fontSize: 11, fontWeight: bold ? 900 : 600, border: '1px solid #e2e8f0', color: color || '#1e293b' }}>{children}</td>
+          <td style={{ padding: '2.5px 6px', textAlign: align || 'left', fontSize: 8.5, fontWeight: bold ? 900 : 600, color: color || '#1e293b', borderBottom: '1px solid #eef2f7' }}>{children}</td>
         );
-        const PartTitle = ({ num, label }: any) => (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px 0', paddingBottom: 6, borderBottom: '2px solid #dbeafe' }}>
-            <span style={{ width: 26, height: 26, background: C.blue900, color: C.gold, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 12 }}>{num}</span>
-            <h3 style={{ margin: 0, color: C.blue900, fontWeight: 900, fontSize: 14, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</h3>
-          </div>
+        const Part = ({ num, label, accent, children }: any) => (
+          <section style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', marginBottom: 9 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 9px', background: '#f1f5f9', borderLeft: `3px solid ${accent}` }}>
+              <span style={{ width: 15, height: 15, background: C.blue900, color: C.gold, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 8.5 }}>{num}</span>
+              <h3 style={{ margin: 0, color: C.blue900, fontWeight: 900, fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</h3>
+            </div>
+            <div style={{ padding: 9 }}>{children}</div>
+          </section>
         );
-        return (
-          <div aria-hidden="true" style={{ position: 'fixed', left: -10000, top: 0, width: 820, pointerEvents: 'none', zIndex: -1 }}>
-            <div ref={ficheRef} className="not-italic" style={{ width: 820, background: '#fff', padding: 36, fontFamily: 'Arial, sans-serif' }}>
+        const tableStyle = { width: '100%', borderCollapse: 'collapse' as const };
+        const theadRow = { background: C.blue800 };
+        const totalRow = { background: '#eff6ff' };
+        const subLabel = { margin: '0 0 4px 0', fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#94a3b8' };
 
-              {/* HEADER — station info + logo */}
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', paddingBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        return (
+          <div aria-hidden="true" style={{ position: 'fixed', left: -10000, top: 0, width: 794, pointerEvents: 'none', zIndex: -1 }}>
+            <div ref={ficheRef} className="not-italic" style={{ width: 794, background: '#fff', padding: 18, fontFamily: 'Arial, sans-serif', color: '#1e293b' }}>
+
+              {/* HEADER BANNER — station info + logo + period */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 10, background: `linear-gradient(135deg, ${C.blue900} 0%, ${C.blue800} 55%, ${C.blue600} 100%)` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   {(settings.logoUrl || (settings as any).logo) ? (
-                    <img src={settings.logoUrl || (settings as any).logo} alt="logo" style={{ width: 64, height: 64, objectFit: 'contain', borderRadius: 12, border: '1px solid #e2e8f0' }} />
+                    <img src={settings.logoUrl || (settings as any).logo} alt="logo" style={{ width: 46, height: 46, objectFit: 'contain', borderRadius: 8, background: '#fff', padding: 2 }} />
                   ) : (
-                    <div style={{ width: 64, height: 64, background: C.blue900, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <span style={{ color: C.gold, fontSize: 28, fontWeight: 900 }}>⛽</span>
+                    <div style={{ width: 46, height: 46, background: 'rgba(255,184,0,0.15)', border: '1px solid rgba(255,184,0,0.4)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ color: C.gold, fontSize: 22, fontWeight: 900 }}>⛽</span>
                     </div>
                   )}
                   <div>
-                    <p style={{ margin: 0, fontWeight: 900, fontSize: 22, color: C.blue900 }}>{settings.name || 'Station Naftal'}</p>
-                    {settings.address && <p style={{ margin: '2px 0 0 0', fontSize: 11, color: '#64748b' }}>{settings.address}</p>}
+                    <p style={{ margin: 0, fontWeight: 900, fontSize: 16, color: '#fff', letterSpacing: 0.3 }}>{settings.name || 'Station Naftal'}</p>
+                    {settings.address && <p style={{ margin: '1px 0 0 0', fontSize: 8.5, color: 'rgba(255,255,255,0.7)' }}>{settings.address}</p>}
+                    <p style={{ margin: '1px 0 0 0', fontSize: 8, color: 'rgba(255,255,255,0.55)' }}>
+                      {[settings.phone && `Tél: ${settings.phone}`, settings.fiscalId && `NIF: ${settings.fiscalId}`, settings.rc && `RC: ${settings.rc}`].filter(Boolean).join('  ·  ')}
+                    </p>
                   </div>
                 </div>
-                <div style={{ textAlign: 'right', fontSize: 11, color: '#64748b' }}>
-                  {settings.phone && <p style={{ margin: '0 0 2px 0' }}>Tél: {settings.phone}</p>}
-                  {settings.email && <p style={{ margin: '0 0 2px 0' }}>{settings.email}</p>}
-                  {settings.fiscalId && <p style={{ margin: '0 0 2px 0' }}>NIF: {settings.fiscalId}</p>}
-                  {settings.rc && <p style={{ margin: '0 0 2px 0' }}>RC: {settings.rc}</p>}
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ display: 'inline-block', background: C.gold, color: C.blue900, fontWeight: 900, fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, padding: '4px 10px', borderRadius: 6 }}>Fiche Journalière</span>
+                  <p style={{ margin: '5px 0 0 0', fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.85)' }}>Du {startDate} au {endDate}</p>
                 </div>
               </div>
-              <div style={{ height: 3, width: '100%', background: `linear-gradient(90deg, ${C.blue900}, ${C.gold}, ${C.blue900})`, borderRadius: 2 }} />
+              <div style={{ height: 2, width: '100%', background: `linear-gradient(90deg, ${C.gold}, transparent)`, margin: '0 0 10px 0' }} />
 
-              {/* TITLE + PERIOD */}
-              <div style={{ textAlign: 'center', margin: '18px 0 26px 0' }}>
-                <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: C.blue800, textTransform: 'uppercase', letterSpacing: 1 }}>Fiche Journalière</h1>
-                <p style={{ margin: '6px 0 0 0', fontSize: 13, fontWeight: 700, color: '#475569' }}>Période : du <b style={{ color: C.blue900 }}>{startDate}</b> au <b style={{ color: C.blue900 }}>{endDate}</b></p>
+              {/* KPI STRIP */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 7, marginBottom: 10 }}>
+                {[
+                  { label: 'Litres vendus', value: `${lit(f.fuelTotals.liters)} L`, col: C.blue700 },
+                  { label: 'Vente totale', value: `${da(venteTotale)} DA`, col: '#047857' },
+                  { label: 'Dépenses', value: `${da(f.allExpenseTotal)} DA`, col: '#dc2626' },
+                  { label: 'Bénéfice net', value: `${da(beneficeNet)} DA`, col: beneficeNet >= 0 ? '#15803d' : '#dc2626' },
+                ].map(k => (
+                  <div key={k.label} style={{ border: '1px solid #e2e8f0', borderRadius: 7, padding: '6px 9px', background: '#f8fafc' }}>
+                    <p style={{ margin: 0, fontSize: 7, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#94a3b8' }}>{k.label}</p>
+                    <p style={{ margin: '2px 0 0 0', fontSize: 12.5, fontWeight: 900, color: k.col }}>{k.value}</p>
+                  </div>
+                ))}
               </div>
 
               {/* ═══ PART 1 — CARBURANT ═══ */}
-              <section style={{ marginBottom: 26 }}>
-                <PartTitle num="1" label="Carburant" />
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ background: C.blue900 }}>
+              <Part num="1" label="Carburant" accent={C.blue700}>
+                <table style={tableStyle}>
+                  <thead><tr style={theadRow}>
                     <TH>Carburant</TH><TH align="right">Quantité (L)</TH><TH align="right">Total Achat</TH><TH align="right">Total Vente</TH><TH align="right">Gains</TH>
                   </tr></thead>
                   <tbody>
                     {f.fuelRows.length === 0 && (<tr><TD>—</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD></tr>)}
-                    {f.fuelRows.map(r => (
-                      <tr key={r.type}>
+                    {f.fuelRows.map((r, i) => (
+                      <tr key={r.type} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
                         <TD bold>{r.type}</TD>
                         <TD align="right">{lit(r.liters)} L</TD>
                         <TD align="right" color="#b45309">{da(r.buy)} DA</TD>
@@ -1341,7 +1362,7 @@ const DailyReport = () => {
                         <TD align="right" bold color={r.gain >= 0 ? '#15803d' : '#dc2626'}>{da(r.gain)} DA</TD>
                       </tr>
                     ))}
-                    <tr style={{ background: '#eff6ff' }}>
+                    <tr style={totalRow}>
                       <TD bold color={C.blue900}>TOTAL</TD>
                       <TD align="right" bold color={C.blue900}>{lit(f.fuelTotals.liters)} L</TD>
                       <TD align="right" bold color="#b45309">{da(f.fuelTotals.buy)} DA</TD>
@@ -1351,38 +1372,29 @@ const DailyReport = () => {
                   </tbody>
                 </table>
 
-                {/* cash received */}
-                <div style={{ marginTop: 12, padding: '10px 14px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 900, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: '#065f46' }}>Espèces reçues (carburant)</span>
-                  <span style={{ fontWeight: 900, fontSize: 15, color: '#047857' }}>{da(f.brigadeCash)} DA</span>
+                {/* cash + justification chips on one compact row */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                  <span style={{ fontWeight: 900, fontSize: 8.5, padding: '4px 9px', borderRadius: 6, background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857' }}>
+                    Espèces reçues : {da(f.brigadeCash)} DA
+                  </span>
+                  {justifItems.map(j => (
+                    <span key={j.label} style={{ fontWeight: 800, fontSize: 8.5, padding: '4px 9px', borderRadius: 6, background: '#f8fafc', border: '1px solid #e2e8f0', color: j.color }}>
+                      {j.label} : {da(j.value)} DA
+                    </span>
+                  ))}
                 </div>
 
-                {/* justification totals (only those that exist) */}
-                {justifItems.length > 0 && (
-                  <div style={{ marginTop: 12 }}>
-                    <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#94a3b8' }}>Justifications des écarts</p>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-                      {justifItems.map(j => (
-                        <div key={j.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>{j.label}</span>
-                          <span style={{ fontSize: 13, fontWeight: 900, color: j.color }}>{da(j.value)} DA</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* décalage cases for the period */}
+                {/* décalage cases */}
                 {f.decalageCases.length > 0 && (
-                  <div style={{ marginTop: 12 }}>
-                    <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#94a3b8' }}>Décalages remarqués (étape comparaison)</p>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead><tr style={{ background: C.blue900 }}>
+                  <div style={{ marginTop: 8 }}>
+                    <p style={subLabel}>Décalages remarqués (étape comparaison)</p>
+                    <table style={tableStyle}>
+                      <thead><tr style={theadRow}>
                         <TH>Type</TH><TH>Cuve</TH><TH>Chef</TH><TH align="right">Écart (L)</TH><TH align="right">Montant</TH><TH align="right">Date</TH>
                       </tr></thead>
                       <tbody>
                         {f.decalageCases.map((d, i) => (
-                          <tr key={i}>
+                          <tr key={i} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
                             <TD bold color={d.type === 'RETOUR_CUVE' ? '#c2410c' : '#b91c1c'}>{d.type === 'RETOUR_CUVE' ? 'Retour cuve' : 'Vente directe'}</TD>
                             <TD>{d.tankName}</TD>
                             <TD>{d.chefName}</TD>
@@ -1395,19 +1407,18 @@ const DailyReport = () => {
                     </table>
                   </div>
                 )}
-              </section>
+              </Part>
 
               {/* ═══ PART 2 — MAGASIN ═══ */}
-              <section style={{ marginBottom: 26 }}>
-                <PartTitle num="2" label="Magasin" />
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ background: C.blue900 }}>
+              <Part num="2" label="Magasin" accent="#c2410c">
+                <table style={tableStyle}>
+                  <thead><tr style={theadRow}>
                     <TH>Produit</TH><TH align="right">Quantité</TH><TH align="right">Total Achat</TH><TH align="right">Total Vente</TH><TH align="right">Gains</TH>
                   </tr></thead>
                   <tbody>
                     {f.shopRows.length === 0 && (<tr><TD>Aucune vente magasin</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD></tr>)}
                     {f.shopRows.map((r, i) => (
-                      <tr key={i}>
+                      <tr key={i} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
                         <TD bold>{r.name}</TD>
                         <TD align="right">{lit(r.qty)}</TD>
                         <TD align="right" color="#b45309">{da(r.buy)} DA</TD>
@@ -1415,7 +1426,7 @@ const DailyReport = () => {
                         <TD align="right" bold color={r.gain >= 0 ? '#15803d' : '#dc2626'}>{da(r.gain)} DA</TD>
                       </tr>
                     ))}
-                    <tr style={{ background: '#eff6ff' }}>
+                    <tr style={totalRow}>
                       <TD bold color={C.blue900}>TOTAL</TD>
                       <TD align="right" bold color={C.blue900}>{lit(f.shopTotals.qty)}</TD>
                       <TD align="right" bold color="#b45309">{da(f.shopTotals.buy)} DA</TD>
@@ -1424,19 +1435,18 @@ const DailyReport = () => {
                     </tr>
                   </tbody>
                 </table>
-              </section>
+              </Part>
 
               {/* ═══ PART 3 — DÉPENSES ═══ */}
-              <section style={{ marginBottom: 26 }}>
-                <PartTitle num="3" label="Dépenses" />
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ background: C.blue900 }}>
+              <Part num="3" label="Dépenses" accent="#dc2626">
+                <table style={tableStyle}>
+                  <thead><tr style={theadRow}>
                     <TH>Catégorie</TH><TH>Nom / Description</TH><TH align="right">Coût</TH><TH align="right">Date</TH>
                   </tr></thead>
                   <tbody>
                     {f.allExpenseRows.length === 0 && (<tr><TD>Aucune dépense</TD><TD>—</TD><TD align="right">0</TD><TD align="right">—</TD></tr>)}
                     {f.allExpenseRows.map((r, i) => (
-                      <tr key={i}>
+                      <tr key={i} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
                         <TD bold color={r.kind === 'Salaire' ? '#4338ca' : r.kind === 'Acompte' ? '#b45309' : '#0f172a'}>{r.kind}</TD>
                         <TD>{r.name}{r.description ? <span style={{ color: '#94a3b8' }}> — {r.description}</span> : null}</TD>
                         <TD align="right" bold color="#dc2626">{da(r.amount)} DA</TD>
@@ -1451,58 +1461,53 @@ const DailyReport = () => {
                     </tr>
                   </tbody>
                 </table>
-              </section>
+              </Part>
 
               {/* ═══ PART 4 — RÉCAPITULATION ═══ */}
-              <section>
-                <PartTitle num="4" label="Récapitulation" />
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 }}>
+              <Part num="4" label="Récapitulation" accent="#047857">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginBottom: 8 }}>
                   {[
                     { label: 'Vente Carburant', value: f.fuelTotals.selling, bg: '#eff6ff', col: '#1d4ed8' },
                     { label: 'Vente Magasin', value: f.shopTotals.selling, bg: '#fff7ed', col: '#c2410c' },
-                    { label: 'Total Espèces (toutes ventes)', value: f.recapCash, bg: '#ecfdf5', col: '#047857' },
+                    { label: 'Espèces (toutes ventes)', value: f.recapCash, bg: '#ecfdf5', col: '#047857' },
                   ].map(c => (
-                    <div key={c.label} style={{ padding: '12px 14px', background: c.bg, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-                      <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#64748b' }}>{c.label}</p>
-                      <p style={{ margin: '4px 0 0 0', fontSize: 17, fontWeight: 900, color: c.col }}>{da(c.value)} DA</p>
+                    <div key={c.label} style={{ padding: '7px 9px', background: c.bg, borderRadius: 7, border: '1px solid #e2e8f0' }}>
+                      <p style={{ margin: 0, fontSize: 7, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b' }}>{c.label}</p>
+                      <p style={{ margin: '2px 0 0 0', fontSize: 13, fontWeight: 900, color: c.col }}>{da(c.value)} DA</p>
                     </div>
                   ))}
                 </div>
-
-                {/* Missing money justifications: TPE caisse + tags */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={{ padding: '14px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
-                    <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#0e7490' }}>💳 Caisse TPE (au {endDate})</p>
-                    <p style={{ margin: '6px 0 0 0', fontSize: 20, fontWeight: 900, color: '#0e7490' }}>{da(f.tpeCaisseToEnd)} DA</p>
-                    <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#94a3b8' }}>Valeur cumulée de la caisse TPE à la date de fin de période</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
+                  <div style={{ padding: '8px 10px', background: '#ecfeff', borderRadius: 7, border: '1px solid #a5f3fc' }}>
+                    <p style={{ margin: 0, fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0e7490' }}>💳 Caisse TPE (au {endDate})</p>
+                    <p style={{ margin: '2px 0 0 0', fontSize: 15, fontWeight: 900, color: '#0e7490' }}>{da(f.tpeCaisseToEnd)} DA</p>
                   </div>
-                  <div style={{ padding: '14px', background: '#faf5ff', borderRadius: 12, border: '1px solid #e9d5ff' }}>
-                    <p style={{ margin: '0 0 8px 0', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#7c3aed' }}>🏷️ Tags / Bons détenus</p>
+                  <div style={{ padding: '8px 10px', background: '#faf5ff', borderRadius: 7, border: '1px solid #e9d5ff' }}>
+                    <p style={{ margin: '0 0 4px 0', fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7c3aed' }}>🏷️ Tags / Bons détenus</p>
                     {f.tagGroups.length === 0 ? (
-                      <p style={{ margin: 0, fontSize: 12, color: '#94a3b8' }}>Aucun tag</p>
+                      <p style={{ margin: 0, fontSize: 8.5, color: '#94a3b8' }}>Aucun tag</p>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                         {f.tagGroups.map(g => (
-                          <div key={g.amount} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
-                            <span style={{ fontWeight: 700, color: '#581c87' }}>Tags de {da(g.amount)} DA</span>
-                            <span style={{ fontWeight: 900, color: '#7c3aed' }}>× {g.count}</span>
-                          </div>
+                          <span key={g.amount} style={{ fontSize: 8.5, fontWeight: 800, color: '#6b21a8', background: '#f3e8ff', border: '1px solid #e9d5ff', borderRadius: 5, padding: '2px 7px' }}>
+                            {da(g.amount)} DA × {g.count}
+                          </span>
                         ))}
                       </div>
                     )}
                   </div>
                 </div>
-              </section>
+              </Part>
 
               {/* FOOTER */}
-              <div style={{ marginTop: 30, paddingTop: 16, borderTop: '2px solid #cbd5e1' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#94a3b8', marginBottom: 24 }}>
+              <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 7.5, color: '#94a3b8', marginBottom: 14 }}>
                   <span>Généré le {new Date().toLocaleString('fr-FR')}</span>
                   <span>{settings.name || 'Station'} — Fiche Journalière</span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 64 }}>
-                  <div><p style={{ fontSize: 12, fontWeight: 900, color: '#334155', marginBottom: 36 }}>Signature Chef de Station :</p><div style={{ borderBottom: '2px solid #94a3b8' }} /></div>
-                  <div><p style={{ fontSize: 12, fontWeight: 900, color: '#334155', marginBottom: 36 }}>Cachet & Signature Gérant :</p><div style={{ borderBottom: '2px solid #94a3b8' }} /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 48 }}>
+                  <div><p style={{ fontSize: 8.5, fontWeight: 900, color: '#334155', marginBottom: 22 }}>Signature Chef de Station :</p><div style={{ borderBottom: '1px solid #94a3b8' }} /></div>
+                  <div><p style={{ fontSize: 8.5, fontWeight: 900, color: '#334155', marginBottom: 22 }}>Cachet & Signature Gérant :</p><div style={{ borderBottom: '1px solid #94a3b8' }} /></div>
                 </div>
               </div>
 
@@ -1520,11 +1525,17 @@ const DailyReport = () => {
       <style>{`
         #daily-report-print-area-portal { display: none; }
         @media print {
+          /* Single A4 portrait page, tight margins. */
+          @page { size: A4 portrait; margin: 8mm; }
           /* App-shell hide + portal reveal is handled globally (index.css,
              body.print-document). Here we only fine-tune the cloned content. */
           body.print-document #daily-report-print-area-portal .no-print { display: none !important; }
           body.print-document #daily-report-print-area-portal .print-only { display: block !important; }
           body.print-document #daily-report-print-area-portal * { box-shadow: none !important; overflow: visible !important; }
+          /* The fiche is authored at 794px (A4 width); fit it to the printable
+             width and let it flow as a single compact page. */
+          body.print-document #daily-report-print-area-portal > div { position: static !important; left: auto !important; width: 100% !important; }
+          body.print-document #daily-report-print-area-portal > div > div { width: 100% !important; padding: 0 !important; }
         }
       `}</style>
     </div>
