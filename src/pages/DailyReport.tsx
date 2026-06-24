@@ -415,7 +415,7 @@ const DailyReport = () => {
     const ok = await exportElementToPdf(
       ficheRef.current,
       `Fiche_Journaliere_${startDate}_${endDate}.pdf`,
-      { scale: 2, fit: 'single' }
+      { scale: 2, fit: 'single', margin: 5 }
     );
     setIsPdfLoading(false);
     if (!ok) alert("Échec de la génération du PDF. Réessayez ou utilisez Imprimer → Enregistrer en PDF.");
@@ -1280,67 +1280,67 @@ const DailyReport = () => {
         const venteTotale = f.fuelTotals.selling + f.shopTotals.selling;
         const beneficeNet = f.fuelTotals.gain + f.shopTotals.gain - f.allExpenseTotal;
 
-        // Compact shared primitives ------------------------------------------------
+        // Shared primitives ----------------------------------------------------------
         const TH = ({ children, align }: any) => (
-          <th style={{ padding: '3px 6px', textAlign: align || 'left', fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.3, color: '#fff' }}>{children}</th>
+          <th style={{ padding: '6px 9px', textAlign: align || 'left', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>{children}</th>
         );
         const TD = ({ children, align, bold, color }: any) => (
-          <td style={{ padding: '2.5px 6px', textAlign: align || 'left', fontSize: 8.5, fontWeight: bold ? 900 : 600, color: color || '#1e293b', borderBottom: '1px solid #eef2f7' }}>{children}</td>
+          <td style={{ padding: '5px 9px', textAlign: align || 'left', fontSize: 11, fontWeight: bold ? 900 : 600, color: color || '#1e293b', borderBottom: '1px solid #eef2f7' }}>{children}</td>
         );
         const Part = ({ num, label, accent, children }: any) => (
-          <section style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', marginBottom: 9 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 9px', background: '#f1f5f9', borderLeft: `3px solid ${accent}` }}>
-              <span style={{ width: 15, height: 15, background: C.blue900, color: C.gold, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 8.5 }}>{num}</span>
-              <h3 style={{ margin: 0, color: C.blue900, fontWeight: 900, fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</h3>
+          <section style={{ borderTop: `2px solid ${accent}`, margin: '0 14px 14px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', background: '#fff', borderBottom: '1px solid #e2e8f0' }}>
+              <span style={{ width: 20, height: 20, background: C.blue900, color: C.gold, borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 11 }}>{num}</span>
+              <h3 style={{ margin: 0, color: C.blue900, fontWeight: 900, fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.8 }}>{label}</h3>
             </div>
-            <div style={{ padding: 9 }}>{children}</div>
+            <div style={{ padding: '10px 0 0 0' }}>{children}</div>
           </section>
         );
         const tableStyle = { width: '100%', borderCollapse: 'collapse' as const };
         const theadRow = { background: C.blue800 };
         const totalRow = { background: '#eff6ff' };
-        const subLabel = { margin: '0 0 4px 0', fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#94a3b8' };
+        const subLabel = { margin: '0 0 5px 0', fontSize: 9.5, fontWeight: 900, textTransform: 'uppercase' as const, letterSpacing: 0.5, color: '#94a3b8' };
 
         return (
           <div aria-hidden="true" style={{ position: 'fixed', left: -10000, top: 0, width: 794, pointerEvents: 'none', zIndex: -1 }}>
-            <div ref={ficheRef} className="not-italic" style={{ width: 794, background: '#fff', padding: 18, fontFamily: 'Arial, sans-serif', color: '#1e293b' }}>
+            <div ref={ficheRef} className="not-italic" style={{ width: 794, background: '#fff', padding: '0 0 8px 0', fontFamily: 'Arial, sans-serif', color: '#1e293b' }}>
 
               {/* HEADER BANNER — station info + logo + period */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 10, background: `linear-gradient(135deg, ${C.blue900} 0%, ${C.blue800} 55%, ${C.blue600} 100%)` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', background: `linear-gradient(135deg, ${C.blue900} 0%, ${C.blue800} 55%, ${C.blue600} 100%)` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                   {(settings.logoUrl || (settings as any).logo) ? (
-                    <img src={settings.logoUrl || (settings as any).logo} alt="logo" style={{ width: 46, height: 46, objectFit: 'contain', borderRadius: 8, background: '#fff', padding: 2 }} />
+                    <img src={settings.logoUrl || (settings as any).logo} alt="logo" style={{ width: 58, height: 58, objectFit: 'contain', borderRadius: 8, background: '#fff', padding: 3 }} />
                   ) : (
-                    <div style={{ width: 46, height: 46, background: 'rgba(255,184,0,0.15)', border: '1px solid rgba(255,184,0,0.4)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <span style={{ color: C.gold, fontSize: 22, fontWeight: 900 }}>⛽</span>
+                    <div style={{ width: 58, height: 58, background: 'rgba(255,184,0,0.15)', border: '1px solid rgba(255,184,0,0.4)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ color: C.gold, fontSize: 28, fontWeight: 900 }}>⛽</span>
                     </div>
                   )}
                   <div>
-                    <p style={{ margin: 0, fontWeight: 900, fontSize: 16, color: '#fff', letterSpacing: 0.3 }}>{settings.name || 'Station Naftal'}</p>
-                    {settings.address && <p style={{ margin: '1px 0 0 0', fontSize: 8.5, color: 'rgba(255,255,255,0.7)' }}>{settings.address}</p>}
-                    <p style={{ margin: '1px 0 0 0', fontSize: 8, color: 'rgba(255,255,255,0.55)' }}>
+                    <p style={{ margin: 0, fontWeight: 900, fontSize: 22, color: '#fff', letterSpacing: 0.3 }}>{settings.name || 'Station Naftal'}</p>
+                    {settings.address && <p style={{ margin: '2px 0 0 0', fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{settings.address}</p>}
+                    <p style={{ margin: '2px 0 0 0', fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>
                       {[settings.phone && `Tél: ${settings.phone}`, settings.fiscalId && `NIF: ${settings.fiscalId}`, settings.rc && `RC: ${settings.rc}`].filter(Boolean).join('  ·  ')}
                     </p>
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <span style={{ display: 'inline-block', background: C.gold, color: C.blue900, fontWeight: 900, fontSize: 9, textTransform: 'uppercase', letterSpacing: 1, padding: '4px 10px', borderRadius: 6 }}>Fiche Journalière</span>
-                  <p style={{ margin: '5px 0 0 0', fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.85)' }}>Du {startDate} au {endDate}</p>
+                  <span style={{ display: 'inline-block', background: C.gold, color: C.blue900, fontWeight: 900, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, padding: '6px 14px', borderRadius: 6 }}>Fiche Journalière</span>
+                  <p style={{ margin: '7px 0 0 0', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.9)' }}>Du {startDate} au {endDate}</p>
                 </div>
               </div>
-              <div style={{ height: 2, width: '100%', background: `linear-gradient(90deg, ${C.gold}, transparent)`, margin: '0 0 10px 0' }} />
+              <div style={{ height: 4, width: '100%', background: `linear-gradient(90deg, ${C.gold}, transparent)`, margin: '0 0 14px 0' }} />
 
               {/* KPI STRIP */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 7, marginBottom: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, margin: '0 14px 16px 14px' }}>
                 {[
                   { label: 'Litres vendus', value: `${lit(f.fuelTotals.liters)} L`, col: C.blue700 },
                   { label: 'Vente totale', value: `${da(venteTotale)} DA`, col: '#047857' },
                   { label: 'Dépenses', value: `${da(f.allExpenseTotal)} DA`, col: '#dc2626' },
                   { label: 'Bénéfice net', value: `${da(beneficeNet)} DA`, col: beneficeNet >= 0 ? '#15803d' : '#dc2626' },
                 ].map(k => (
-                  <div key={k.label} style={{ border: '1px solid #e2e8f0', borderRadius: 7, padding: '6px 9px', background: '#f8fafc' }}>
-                    <p style={{ margin: 0, fontSize: 7, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#94a3b8' }}>{k.label}</p>
-                    <p style={{ margin: '2px 0 0 0', fontSize: 12.5, fontWeight: 900, color: k.col }}>{k.value}</p>
+                  <div key={k.label} style={{ borderLeft: `3px solid ${k.col}`, background: '#f8fafc', borderRadius: '0 7px 7px 0', padding: '8px 12px' }}>
+                    <p style={{ margin: 0, fontSize: 8.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#94a3b8' }}>{k.label}</p>
+                    <p style={{ margin: '3px 0 0 0', fontSize: 16, fontWeight: 900, color: k.col }}>{k.value}</p>
                   </div>
                 ))}
               </div>
@@ -1372,13 +1372,13 @@ const DailyReport = () => {
                   </tbody>
                 </table>
 
-                {/* cash + justification chips on one compact row */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                  <span style={{ fontWeight: 900, fontSize: 8.5, padding: '4px 9px', borderRadius: 6, background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857' }}>
+                {/* cash + justification chips on one row */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 7, marginTop: 10 }}>
+                  <span style={{ fontWeight: 900, fontSize: 10.5, padding: '5px 11px', borderRadius: 6, background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#047857' }}>
                     Espèces reçues : {da(f.brigadeCash)} DA
                   </span>
                   {justifItems.map(j => (
-                    <span key={j.label} style={{ fontWeight: 800, fontSize: 8.5, padding: '4px 9px', borderRadius: 6, background: '#f8fafc', border: '1px solid #e2e8f0', color: j.color }}>
+                    <span key={j.label} style={{ fontWeight: 800, fontSize: 10.5, padding: '5px 11px', borderRadius: 6, background: '#f8fafc', border: '1px solid #e2e8f0', color: j.color }}>
                       {j.label} : {da(j.value)} DA
                     </span>
                   ))}
@@ -1465,31 +1465,31 @@ const DailyReport = () => {
 
               {/* ═══ PART 4 — RÉCAPITULATION ═══ */}
               <Part num="4" label="Récapitulation" accent="#047857">
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginBottom: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 10 }}>
                   {[
                     { label: 'Vente Carburant', value: f.fuelTotals.selling, bg: '#eff6ff', col: '#1d4ed8' },
                     { label: 'Vente Magasin', value: f.shopTotals.selling, bg: '#fff7ed', col: '#c2410c' },
                     { label: 'Espèces (toutes ventes)', value: f.recapCash, bg: '#ecfdf5', col: '#047857' },
                   ].map(c => (
-                    <div key={c.label} style={{ padding: '7px 9px', background: c.bg, borderRadius: 7, border: '1px solid #e2e8f0' }}>
-                      <p style={{ margin: 0, fontSize: 7, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b' }}>{c.label}</p>
-                      <p style={{ margin: '2px 0 0 0', fontSize: 13, fontWeight: 900, color: c.col }}>{da(c.value)} DA</p>
+                    <div key={c.label} style={{ padding: '10px 13px', background: c.bg, borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                      <p style={{ margin: 0, fontSize: 9, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b' }}>{c.label}</p>
+                      <p style={{ margin: '3px 0 0 0', fontSize: 16.5, fontWeight: 900, color: c.col }}>{da(c.value)} DA</p>
                     </div>
                   ))}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
-                  <div style={{ padding: '8px 10px', background: '#ecfeff', borderRadius: 7, border: '1px solid #a5f3fc' }}>
-                    <p style={{ margin: 0, fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0e7490' }}>💳 Caisse TPE (au {endDate})</p>
-                    <p style={{ margin: '2px 0 0 0', fontSize: 15, fontWeight: 900, color: '#0e7490' }}>{da(f.tpeCaisseToEnd)} DA</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={{ padding: '11px 14px', background: '#ecfeff', borderRadius: 8, border: '1px solid #a5f3fc' }}>
+                    <p style={{ margin: 0, fontSize: 9.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#0e7490' }}>💳 Caisse TPE (au {endDate})</p>
+                    <p style={{ margin: '3px 0 0 0', fontSize: 19, fontWeight: 900, color: '#0e7490' }}>{da(f.tpeCaisseToEnd)} DA</p>
                   </div>
-                  <div style={{ padding: '8px 10px', background: '#faf5ff', borderRadius: 7, border: '1px solid #e9d5ff' }}>
-                    <p style={{ margin: '0 0 4px 0', fontSize: 7.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7c3aed' }}>🏷️ Tags / Bons détenus</p>
+                  <div style={{ padding: '11px 14px', background: '#faf5ff', borderRadius: 8, border: '1px solid #e9d5ff' }}>
+                    <p style={{ margin: '0 0 5px 0', fontSize: 9.5, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7c3aed' }}>🏷️ Tags / Bons détenus</p>
                     {f.tagGroups.length === 0 ? (
-                      <p style={{ margin: 0, fontSize: 8.5, color: '#94a3b8' }}>Aucun tag</p>
+                      <p style={{ margin: 0, fontSize: 10.5, color: '#94a3b8' }}>Aucun tag</p>
                     ) : (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {f.tagGroups.map(g => (
-                          <span key={g.amount} style={{ fontSize: 8.5, fontWeight: 800, color: '#6b21a8', background: '#f3e8ff', border: '1px solid #e9d5ff', borderRadius: 5, padding: '2px 7px' }}>
+                          <span key={g.amount} style={{ fontSize: 10.5, fontWeight: 800, color: '#6b21a8', background: '#f3e8ff', border: '1px solid #e9d5ff', borderRadius: 5, padding: '3px 9px' }}>
                             {da(g.amount)} DA × {g.count}
                           </span>
                         ))}
@@ -1500,14 +1500,14 @@ const DailyReport = () => {
               </Part>
 
               {/* FOOTER */}
-              <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 7.5, color: '#94a3b8', marginBottom: 14 }}>
+              <div style={{ margin: '0 14px', paddingTop: 10, borderTop: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#94a3b8', marginBottom: 22 }}>
                   <span>Généré le {new Date().toLocaleString('fr-FR')}</span>
                   <span>{settings.name || 'Station'} — Fiche Journalière</span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 48 }}>
-                  <div><p style={{ fontSize: 8.5, fontWeight: 900, color: '#334155', marginBottom: 22 }}>Signature Chef de Station :</p><div style={{ borderBottom: '1px solid #94a3b8' }} /></div>
-                  <div><p style={{ fontSize: 8.5, fontWeight: 900, color: '#334155', marginBottom: 22 }}>Cachet & Signature Gérant :</p><div style={{ borderBottom: '1px solid #94a3b8' }} /></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 60 }}>
+                  <div><p style={{ fontSize: 10.5, fontWeight: 900, color: '#334155', marginBottom: 34 }}>Signature Chef de Station :</p><div style={{ borderBottom: '1px solid #94a3b8' }} /></div>
+                  <div><p style={{ fontSize: 10.5, fontWeight: 900, color: '#334155', marginBottom: 34 }}>Cachet & Signature Gérant :</p><div style={{ borderBottom: '1px solid #94a3b8' }} /></div>
                 </div>
               </div>
 
@@ -1525,8 +1525,8 @@ const DailyReport = () => {
       <style>{`
         #daily-report-print-area-portal { display: none; }
         @media print {
-          /* Single A4 portrait page, tight margins. */
-          @page { size: A4 portrait; margin: 8mm; }
+          /* Single A4 portrait page, full-bleed margins. */
+          @page { size: A4 portrait; margin: 5mm; }
           /* App-shell hide + portal reveal is handled globally (index.css,
              body.print-document). Here we only fine-tune the cloned content. */
           body.print-document #daily-report-print-area-portal .no-print { display: none !important; }

@@ -118,6 +118,8 @@ export interface ExportPdfOptions {
    *  - "single": scale the whole capture down to fit a single A4 page.
    */
   fit?: "paginate" | "single";
+  /** Page margin in mm (default 10). Use a small value for a full-bleed look. */
+  margin?: number;
 }
 
 /**
@@ -152,7 +154,7 @@ export async function exportElementToPdf(
     const pdf = new jsPDF("p", "mm", "a4");
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    const margin = 10;
+    const margin = opts.margin ?? 10;
     const headerH = opts.header ? 12 : 0;
     const contentW = pageW - margin * 2;
     const contentH = pageH - margin * 2 - headerH;
