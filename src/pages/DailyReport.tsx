@@ -77,10 +77,11 @@ const DailyReport = () => {
   const {
     tanks, brigades, pumps, pumpNozzles, deliveryNotes, products, expenses,
     fuelSales, shopSales, settings, brigadeChefs, pompistes, purchases, clients,
-    tracks, brigadeAccountings, gerants, magasinWorkers
+    tracks, brigadeAccountings, gerants, magasinWorkers, brigadeDecalageAlerts = []
   } = useAppState();
 
   const reportRef = useRef<HTMLDivElement>(null);
+  const ficheRef = useRef<HTMLDivElement>(null);
   const [isGenerated, setIsGenerated] = useState(false);
   const [isLoading, setIsLoading]     = useState(false);
   const [startDate, setStartDate]     = useState(new Date().toISOString().split("T")[0]);
@@ -299,6 +300,93 @@ const DailyReport = () => {
     ];
     const totalWorkerPayments = workerPayments.reduce((a, p) => a + p.netSalary, 0);
 
+    /* ════════ FICHE JOURNALIÈRE — clean printable template data ════════ */
+    const periodBrigadeIds = new Set(selBrigades.map(b => b.id));
+
+    /* A. Carburant — per fuel type (sold qty, money @ buy / @ sell, gains) */
+    const fuelByType: Record<string, { liters: number; selling: number; buy: number }> = {};
+    brigadeDetails.forEach(b => b.nozzleDetail.forEach((n: any) => {
+      const ft = n.pumpType || '—';
+      if (!fuelByType[ft]) fuelByType[ft] = { liters: 0, selling: 0, buy: 0 };
+      fuelByType[ft].liters += n.liters;
+      fuelByType[ft].selling += n.amount;
+      fuelByType[ft].buy += n.liters * ((settings.fuelBuyPrices as any)?.[ft] || 0);
+    }));
+    const fuelRows = Object.entries(fuelByType).map(([type, v]) => ({ type, liters: v.liters, selling: v.selling, buy: v.buy, gain: v.selling - v.buy }));
+    const fuelTotals = fuelRows.reduce((a, r) => ({ liters: a.liters + r.liters, selling: a.selling + r.selling, buy: a.buy + r.buy, gain: a.gain + r.gain }), { liters: 0, selling: 0, buy: 0, gain: 0 });
+
+    /* cash received from brigades (espèces remises) */
+    const brigadeCash = brigadeDetails.reduce((s: number, b: any) => s + (b.accounting?.cashReceived || 0), 0);
+
+    /* B. Justifications totals (TPE / TAG / crédit client / avance client) */
+    const justifByType = { TPE: 0, TAG: 0, CREDIT: 0, AVANCE: 0 };
+    const tagsByAmount: Record<string, number> = {};
+    (brigadeAccountings || []).forEach(acc => {
+      if (!periodBrigadeIds.has(acc.brigadeId)) return;
+      (acc.justifications || []).forEach((j: any) => {
+        if (j.justificationType === 'TPE') justifByType.TPE += j.amount || 0;
+        else if (j.justificationType === 'TAG') {
+          justifByType.TAG += j.amount || 0;
+          const key = String(Math.round(j.amount || 0));
+          tagsByAmount[key] = (tagsByAmount[key] || 0) + 1;
+        } else if (j.justificationType === 'CLIENT' || !j.justificationType) {
+          if (j.paymentMode === 'AVANCE') justifByType.AVANCE += j.amount || 0;
+          else justifByType.CREDIT += j.amount || 0;
+        }
+      });
+    });
+    const tagGroups = Object.entries(tagsByAmount)
+      .map(([amount, count]) => ({ amount: +amount, count }))
+      .sort((a, b) => b.amount - a.amount);
+
+    /* TPE caisse cumulative value as of the period END date (mirrors Settings → Caisse TPE) */
+    const brigadeDateById: Record<string, string> = {};
+    brigades.forEach(b => { brigadeDateById[b.id] = b.date; });
+    let tpeCaisseToEnd = 0;
+    (brigadeAccountings || []).forEach(acc => {
+      const bd = brigadeDateById[acc.brigadeId];
+      if (!bd) return;
+      const dt = new Date(bd); dt.setHours(0, 0, 0, 0);
+      if (dt > end) return;
+      (acc.justifications || []).forEach((j: any) => { if (j.justificationType === 'TPE') tpeCaisseToEnd += j.amount || 0; });
+    });
+
+    /* Décalage cases (comparison-step alerts) for brigades in the period */
+    const decalageCases = (brigadeDecalageAlerts || [])
+      .filter(a => { const d = new Date(a.brigadeDate); return d >= start && d <= end; })
+      .map(a => ({ type: a.alertType, tankName: a.tankName || '—', chefName: a.chefName || '—', liters: a.decalageLiters, amount: a.decalageAmount, date: a.brigadeDate }));
+
+    /* C. Magasin — products sold (qty, money @ buy / @ sell, gains) */
+    const shopByProduct: Record<string, { qty: number; selling: number; buy: number }> = {};
+    selShop.forEach(s => s.items.forEach((i: any) => {
+      const prod = products.find(p => p.id === i.productId);
+      const key = i.productName;
+      if (!shopByProduct[key]) shopByProduct[key] = { qty: 0, selling: 0, buy: 0 };
+      shopByProduct[key].qty += i.quantity;
+      shopByProduct[key].selling += i.quantity * i.price;
+      shopByProduct[key].buy += i.quantity * (prod?.buyPrice || 0);
+    }));
+    const shopRows = Object.entries(shopByProduct).map(([name, v]) => ({ name, qty: v.qty, selling: v.selling, buy: v.buy, gain: v.selling - v.buy }))
+      .sort((a, b) => b.selling - a.selling);
+    const shopTotals = shopRows.reduce((a, r) => ({ qty: a.qty + r.qty, selling: a.selling + r.selling, buy: a.buy + r.buy, gain: a.gain + r.gain }), { qty: 0, selling: 0, buy: 0, gain: 0 });
+
+    /* D. Dépenses — station expenses + worker acomptes + salaries */
+    const expenseRows = selExp.map(e => ({ kind: 'Dépense', name: e.category, description: e.description, amount: e.amount, date: e.date }));
+    const collectAcomptes = (list: any[], label: string) => list.flatMap((w: any) =>
+      (w.acomptes || []).filter((a: any) => a.date && inRange(a.date)).map((a: any) => ({ kind: 'Acompte', name: `${w.name} (${label})`, description: a.description || 'Acompte', amount: a.amount, date: a.date })));
+    const acompteRows = [
+      ...collectAcomptes(pompistes, 'Pompiste'),
+      ...collectAcomptes(brigadeChefs, 'Chef'),
+      ...collectAcomptes(gerants || [], 'Gérant'),
+      ...collectAcomptes(magasinWorkers || [], 'Magasin'),
+    ];
+    const salaryRows = workerPayments.map((p: any) => ({ kind: 'Salaire', name: `${p.workerName} (${p.workerType})`, description: `Salaire ${p.month}`, amount: p.netSalary, date: p.month }));
+    const allExpenseRows = [...expenseRows, ...acompteRows, ...salaryRows];
+    const allExpenseTotal = allExpenseRows.reduce((s, r) => s + (r.amount || 0), 0);
+
+    /* E. Récapitulation */
+    const recapCash = brigadeCash + shopEspeces;
+
     return {
       tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
       topShopProds, fuelRevenue, totalRevenue, fuelPurchasesTotal, shopPurchasesTotal,
@@ -306,29 +394,38 @@ const DailyReport = () => {
       workerPayments, totalWorkerPayments,
       fuelCount: selFuel.length, shopCount: selShop.length,
       totalLiters: selFuel.reduce((a, c) => a + c.liters, 0),
+      // Fiche journalière (clean template)
+      fiche: {
+        fuelRows, fuelTotals, brigadeCash,
+        justifByType, tagGroups, tpeCaisseToEnd, decalageCases,
+        shopRows, shopTotals,
+        allExpenseRows, allExpenseTotal,
+        recapCash,
+      },
     };
   }, [isGenerated, startDate, endDate, fuelSales, shopSales, expenses, brigades,
       tanks, pumps, pumpNozzles, deliveryNotes, purchases, brigadeChefs, pompistes,
-      clients, tracks, brigadeAccountings, settings, gerants, magasinWorkers]);
+      clients, tracks, brigadeAccountings, settings, gerants, magasinWorkers, brigadeDecalageAlerts]);
 
-  /* ─── Export (oklch-safe, paginated A4 — see lib/pdf.ts) ─── */
+  /* ─── Export (oklch-safe, paginated A4 — see lib/pdf.ts). Captures the clean
+        Fiche Journalière template (same pattern as Fiche de Brigade). ─── */
   const handleExportPDF = async () => {
-    if (!reportRef.current) return;
+    if (!ficheRef.current) return;
     setIsPdfLoading(true);
     const ok = await exportElementToPdf(
-      reportRef.current,
+      ficheRef.current,
       `Fiche_Journaliere_${startDate}_${endDate}.pdf`,
-      { header: `${settings.name || 'Station'} — Fiche Journalière — ${startDate} → ${endDate}`, scale: 1.6 }
+      { header: `${settings.name || 'Station'} — Fiche Journalière — ${startDate} → ${endDate}`, scale: 2 }
     );
     setIsPdfLoading(false);
     if (!ok) alert("Échec de la génération du PDF. Réessayez ou utilisez Imprimer → Enregistrer en PDF.");
   };
 
-  /* ─── Print: clone the live report into a body-level portal, then flip the
+  /* ─── Print: clone the clean fiche into a body-level portal, then flip the
         body into document-print mode so the global thermal-receipt print CSS
-        is bypassed and the report prints on full A4 pages. ─── */
+        is bypassed and the fiche prints on full A4 pages. ─── */
   const handlePrint = () => {
-    const el = reportRef.current;
+    const el = ficheRef.current;
     const portal = document.getElementById('daily-report-print-area-portal');
     if (el && portal) {
       portal.innerHTML = '';
@@ -342,6 +439,10 @@ const DailyReport = () => {
     }
     printDocumentMode();
   };
+
+  /* number formatters for the clean fiche */
+  const da = (n: number) => (n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const lit = (n: number) => (n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
 
   const sections = [
     { id: "tanks",     label: "Cuves"        },
@@ -545,6 +646,48 @@ const DailyReport = () => {
               ))}
             </div>
           </div>
+
+          {/* ─── SECTION 0: SYNTHÈSE PAR CARBURANT ─── */}
+          <section className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+            <SectionHeader num="00" label="Synthèse par Carburant" icon={Fuel}
+              colorClass="bg-blue-50 text-blue-700" />
+            <div className="overflow-hidden rounded-2xl border border-slate-100">
+              <table className="w-full text-left">
+                <thead style={{ background: `${C.blue800}0A` }}>
+                  <tr>
+                    {["Carburant", "Quantité vendue", "Total Achat", "Total Vente", "Gains"].map(h => (
+                      <th key={h} className="px-5 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {reportData.fiche.fuelRows.length === 0 && (
+                    <tr><td colSpan={5} className="px-5 py-6 text-center text-slate-300 font-black uppercase text-xs tracking-widest">Aucune vente carburant</td></tr>
+                  )}
+                  {reportData.fiche.fuelRows.map(r => (
+                    <tr key={r.type} className="hover:bg-slate-50/50">
+                      <td className="px-5 py-3"><span className="px-2 py-1 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-black uppercase">{r.type}</span></td>
+                      <td className="px-5 py-3 font-black text-blue-900 text-sm">{r.liters.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} L</td>
+                      <td className="px-5 py-3 font-bold text-amber-700 text-sm">{r.buy.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA</td>
+                      <td className="px-5 py-3 font-black text-blue-700 text-sm">{r.selling.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA</td>
+                      <td className={cn("px-5 py-3 font-black text-sm", r.gain >= 0 ? "text-green-600" : "text-red-600")}>{r.gain.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: `${C.blue800}0A` }}>
+                    <td className="px-5 py-3 font-black text-blue-900 uppercase text-[11px]">Total</td>
+                    <td className="px-5 py-3 font-black text-blue-900 text-sm">{reportData.fiche.fuelTotals.liters.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} L</td>
+                    <td className="px-5 py-3 font-black text-amber-700 text-sm">{reportData.fiche.fuelTotals.buy.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA</td>
+                    <td className="px-5 py-3 font-black text-blue-700 text-sm">{reportData.fiche.fuelTotals.selling.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA</td>
+                    <td className={cn("px-5 py-3 font-black text-sm", reportData.fiche.fuelTotals.gain >= 0 ? "text-green-700" : "text-red-700")}>{reportData.fiche.fuelTotals.gain.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] font-bold text-slate-400 flex items-center gap-2">
+              <FileText className="w-3.5 h-3.5" />
+              Astuce : « Télécharger PDF » et « Imprimer » génèrent la fiche journalière structurée (Carburant · Magasin · Dépenses · Récapitulation). Cette page reste l'analyse détaillée complète.
+            </p>
+          </section>
 
           {/* ─── SECTION 1: CUVES ─── */}
           <section id="section-tanks" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
@@ -879,6 +1022,34 @@ const DailyReport = () => {
                       </div>
                     )}
 
+                    {/* Justifications de la brigade */}
+                    {b.accounting?.justifications && b.accounting.justifications.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Justifications des écarts</p>
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="w-full text-[11px]">
+                            <thead><tr className="bg-slate-50">
+                              {['Type', 'Détail / Description', 'Litres', 'Montant'].map(h => (
+                                <th key={h} className="px-3 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase border border-slate-200">{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {b.accounting.justifications.map((j: any) => (
+                                <tr key={j.id} className="border-b border-slate-100">
+                                  <td className="px-3 py-1.5 font-black border border-slate-200">
+                                    {j.justificationType === 'TAG' ? '🏷️ Tag' : j.justificationType === 'TPE' ? '💳 TPE' : j.paymentMode === 'AVANCE' ? '🟢 Avance' : '🟠 Crédit'}
+                                  </td>
+                                  <td className="px-3 py-1.5 border border-slate-200">{j.notes || j.clientName || '—'}</td>
+                                  <td className="px-3 py-1.5 tabular-nums border border-slate-200">{(j.liters || 0).toFixed(2)}</td>
+                                  <td className="px-3 py-1.5 font-black text-slate-700 border border-slate-200">{(j.amount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Brigade total row */}
                     <div className="flex items-center justify-between p-4 rounded-xl"
                          style={{ background: `linear-gradient(90deg, ${C.blue900}, ${C.blue800})` }}>
@@ -1097,7 +1268,250 @@ const DailyReport = () => {
         </motion.div>
       )}
 
-      {/* Body-level print portal — handlePrint clones the live report into this. */}
+      {/* ══════ CLEAN FICHE JOURNALIÈRE TEMPLATE (off-screen, used for PDF + Print) ══════ */}
+      {isGenerated && reportData && (() => {
+        const f = reportData.fiche;
+        const justifItems = [
+          { label: 'Total TPE', value: f.justifByType.TPE, color: '#0e7490' },
+          { label: 'Total Tags / Bons', value: f.justifByType.TAG, color: '#7c3aed' },
+          { label: 'Total Crédit Client (dette)', value: f.justifByType.CREDIT, color: '#ea580c' },
+          { label: 'Total Avance Client', value: f.justifByType.AVANCE, color: '#0d9488' },
+        ].filter(j => Math.abs(j.value) > 0.001);
+        const TH = ({ children, align }: any) => (
+          <th style={{ padding: '8px 10px', textAlign: align || 'left', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, border: '1px solid #1e3a8a', color: '#fff' }}>{children}</th>
+        );
+        const TD = ({ children, align, bold, color }: any) => (
+          <td style={{ padding: '7px 10px', textAlign: align || 'left', fontSize: 11, fontWeight: bold ? 900 : 600, border: '1px solid #e2e8f0', color: color || '#1e293b' }}>{children}</td>
+        );
+        const PartTitle = ({ num, label }: any) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px 0', paddingBottom: 6, borderBottom: '2px solid #dbeafe' }}>
+            <span style={{ width: 26, height: 26, background: C.blue900, color: C.gold, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 12 }}>{num}</span>
+            <h3 style={{ margin: 0, color: C.blue900, fontWeight: 900, fontSize: 14, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</h3>
+          </div>
+        );
+        return (
+          <div aria-hidden="true" style={{ position: 'fixed', left: -10000, top: 0, width: 820, pointerEvents: 'none', zIndex: -1 }}>
+            <div ref={ficheRef} className="not-italic" style={{ width: 820, background: '#fff', padding: 36, fontFamily: 'Arial, sans-serif' }}>
+
+              {/* HEADER — station info + logo */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', paddingBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  {(settings.logoUrl || (settings as any).logo) ? (
+                    <img src={settings.logoUrl || (settings as any).logo} alt="logo" style={{ width: 64, height: 64, objectFit: 'contain', borderRadius: 12, border: '1px solid #e2e8f0' }} />
+                  ) : (
+                    <div style={{ width: 64, height: 64, background: C.blue900, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ color: C.gold, fontSize: 28, fontWeight: 900 }}>⛽</span>
+                    </div>
+                  )}
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 900, fontSize: 22, color: C.blue900 }}>{settings.name || 'Station Naftal'}</p>
+                    {settings.address && <p style={{ margin: '2px 0 0 0', fontSize: 11, color: '#64748b' }}>{settings.address}</p>}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 11, color: '#64748b' }}>
+                  {settings.phone && <p style={{ margin: '0 0 2px 0' }}>Tél: {settings.phone}</p>}
+                  {settings.email && <p style={{ margin: '0 0 2px 0' }}>{settings.email}</p>}
+                  {settings.fiscalId && <p style={{ margin: '0 0 2px 0' }}>NIF: {settings.fiscalId}</p>}
+                  {settings.rc && <p style={{ margin: '0 0 2px 0' }}>RC: {settings.rc}</p>}
+                </div>
+              </div>
+              <div style={{ height: 3, width: '100%', background: `linear-gradient(90deg, ${C.blue900}, ${C.gold}, ${C.blue900})`, borderRadius: 2 }} />
+
+              {/* TITLE + PERIOD */}
+              <div style={{ textAlign: 'center', margin: '18px 0 26px 0' }}>
+                <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: C.blue800, textTransform: 'uppercase', letterSpacing: 1 }}>Fiche Journalière</h1>
+                <p style={{ margin: '6px 0 0 0', fontSize: 13, fontWeight: 700, color: '#475569' }}>Période : du <b style={{ color: C.blue900 }}>{startDate}</b> au <b style={{ color: C.blue900 }}>{endDate}</b></p>
+              </div>
+
+              {/* ═══ PART 1 — CARBURANT ═══ */}
+              <section style={{ marginBottom: 26 }}>
+                <PartTitle num="1" label="Carburant" />
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ background: C.blue900 }}>
+                    <TH>Carburant</TH><TH align="right">Quantité (L)</TH><TH align="right">Total Achat</TH><TH align="right">Total Vente</TH><TH align="right">Gains</TH>
+                  </tr></thead>
+                  <tbody>
+                    {f.fuelRows.length === 0 && (<tr><TD>—</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD></tr>)}
+                    {f.fuelRows.map(r => (
+                      <tr key={r.type}>
+                        <TD bold>{r.type}</TD>
+                        <TD align="right">{lit(r.liters)} L</TD>
+                        <TD align="right" color="#b45309">{da(r.buy)} DA</TD>
+                        <TD align="right" color="#1d4ed8">{da(r.selling)} DA</TD>
+                        <TD align="right" bold color={r.gain >= 0 ? '#15803d' : '#dc2626'}>{da(r.gain)} DA</TD>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#eff6ff' }}>
+                      <TD bold color={C.blue900}>TOTAL</TD>
+                      <TD align="right" bold color={C.blue900}>{lit(f.fuelTotals.liters)} L</TD>
+                      <TD align="right" bold color="#b45309">{da(f.fuelTotals.buy)} DA</TD>
+                      <TD align="right" bold color="#1d4ed8">{da(f.fuelTotals.selling)} DA</TD>
+                      <TD align="right" bold color={f.fuelTotals.gain >= 0 ? '#15803d' : '#dc2626'}>{da(f.fuelTotals.gain)} DA</TD>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* cash received */}
+                <div style={{ marginTop: 12, padding: '10px 14px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 900, fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, color: '#065f46' }}>Espèces reçues (carburant)</span>
+                  <span style={{ fontWeight: 900, fontSize: 15, color: '#047857' }}>{da(f.brigadeCash)} DA</span>
+                </div>
+
+                {/* justification totals (only those that exist) */}
+                {justifItems.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#94a3b8' }}>Justifications des écarts</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                      {justifItems.map(j => (
+                        <div key={j.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>{j.label}</span>
+                          <span style={{ fontSize: 13, fontWeight: 900, color: j.color }}>{da(j.value)} DA</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* décalage cases for the period */}
+                {f.decalageCases.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#94a3b8' }}>Décalages remarqués (étape comparaison)</p>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead><tr style={{ background: C.blue900 }}>
+                        <TH>Type</TH><TH>Cuve</TH><TH>Chef</TH><TH align="right">Écart (L)</TH><TH align="right">Montant</TH><TH align="right">Date</TH>
+                      </tr></thead>
+                      <tbody>
+                        {f.decalageCases.map((d, i) => (
+                          <tr key={i}>
+                            <TD bold color={d.type === 'RETOUR_CUVE' ? '#c2410c' : '#b91c1c'}>{d.type === 'RETOUR_CUVE' ? 'Retour cuve' : 'Vente directe'}</TD>
+                            <TD>{d.tankName}</TD>
+                            <TD>{d.chefName}</TD>
+                            <TD align="right">{lit(d.liters)}</TD>
+                            <TD align="right" bold>{da(d.amount)} DA</TD>
+                            <TD align="right">{d.date}</TD>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {/* ═══ PART 2 — MAGASIN ═══ */}
+              <section style={{ marginBottom: 26 }}>
+                <PartTitle num="2" label="Magasin" />
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ background: C.blue900 }}>
+                    <TH>Produit</TH><TH align="right">Quantité</TH><TH align="right">Total Achat</TH><TH align="right">Total Vente</TH><TH align="right">Gains</TH>
+                  </tr></thead>
+                  <tbody>
+                    {f.shopRows.length === 0 && (<tr><TD>Aucune vente magasin</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD><TD align="right">0</TD></tr>)}
+                    {f.shopRows.map((r, i) => (
+                      <tr key={i}>
+                        <TD bold>{r.name}</TD>
+                        <TD align="right">{lit(r.qty)}</TD>
+                        <TD align="right" color="#b45309">{da(r.buy)} DA</TD>
+                        <TD align="right" color="#1d4ed8">{da(r.selling)} DA</TD>
+                        <TD align="right" bold color={r.gain >= 0 ? '#15803d' : '#dc2626'}>{da(r.gain)} DA</TD>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#eff6ff' }}>
+                      <TD bold color={C.blue900}>TOTAL</TD>
+                      <TD align="right" bold color={C.blue900}>{lit(f.shopTotals.qty)}</TD>
+                      <TD align="right" bold color="#b45309">{da(f.shopTotals.buy)} DA</TD>
+                      <TD align="right" bold color="#1d4ed8">{da(f.shopTotals.selling)} DA</TD>
+                      <TD align="right" bold color={f.shopTotals.gain >= 0 ? '#15803d' : '#dc2626'}>{da(f.shopTotals.gain)} DA</TD>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* ═══ PART 3 — DÉPENSES ═══ */}
+              <section style={{ marginBottom: 26 }}>
+                <PartTitle num="3" label="Dépenses" />
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ background: C.blue900 }}>
+                    <TH>Catégorie</TH><TH>Nom / Description</TH><TH align="right">Coût</TH><TH align="right">Date</TH>
+                  </tr></thead>
+                  <tbody>
+                    {f.allExpenseRows.length === 0 && (<tr><TD>Aucune dépense</TD><TD>—</TD><TD align="right">0</TD><TD align="right">—</TD></tr>)}
+                    {f.allExpenseRows.map((r, i) => (
+                      <tr key={i}>
+                        <TD bold color={r.kind === 'Salaire' ? '#4338ca' : r.kind === 'Acompte' ? '#b45309' : '#0f172a'}>{r.kind}</TD>
+                        <TD>{r.name}{r.description ? <span style={{ color: '#94a3b8' }}> — {r.description}</span> : null}</TD>
+                        <TD align="right" bold color="#dc2626">{da(r.amount)} DA</TD>
+                        <TD align="right">{r.date}</TD>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#fef2f2' }}>
+                      <TD bold color="#991b1b">TOTAL DÉPENSES</TD>
+                      <TD />
+                      <TD align="right" bold color="#991b1b">{da(f.allExpenseTotal)} DA</TD>
+                      <TD />
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+
+              {/* ═══ PART 4 — RÉCAPITULATION ═══ */}
+              <section>
+                <PartTitle num="4" label="Récapitulation" />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 }}>
+                  {[
+                    { label: 'Vente Carburant', value: f.fuelTotals.selling, bg: '#eff6ff', col: '#1d4ed8' },
+                    { label: 'Vente Magasin', value: f.shopTotals.selling, bg: '#fff7ed', col: '#c2410c' },
+                    { label: 'Total Espèces (toutes ventes)', value: f.recapCash, bg: '#ecfdf5', col: '#047857' },
+                  ].map(c => (
+                    <div key={c.label} style={{ padding: '12px 14px', background: c.bg, borderRadius: 10, border: '1px solid #e2e8f0' }}>
+                      <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#64748b' }}>{c.label}</p>
+                      <p style={{ margin: '4px 0 0 0', fontSize: 17, fontWeight: 900, color: c.col }}>{da(c.value)} DA</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Missing money justifications: TPE caisse + tags */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={{ padding: '14px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                    <p style={{ margin: 0, fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#0e7490' }}>💳 Caisse TPE (au {endDate})</p>
+                    <p style={{ margin: '6px 0 0 0', fontSize: 20, fontWeight: 900, color: '#0e7490' }}>{da(f.tpeCaisseToEnd)} DA</p>
+                    <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#94a3b8' }}>Valeur cumulée de la caisse TPE à la date de fin de période</p>
+                  </div>
+                  <div style={{ padding: '14px', background: '#faf5ff', borderRadius: 12, border: '1px solid #e9d5ff' }}>
+                    <p style={{ margin: '0 0 8px 0', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 1, color: '#7c3aed' }}>🏷️ Tags / Bons détenus</p>
+                    {f.tagGroups.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 12, color: '#94a3b8' }}>Aucun tag</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {f.tagGroups.map(g => (
+                          <div key={g.amount} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                            <span style={{ fontWeight: 700, color: '#581c87' }}>Tags de {da(g.amount)} DA</span>
+                            <span style={{ fontWeight: 900, color: '#7c3aed' }}>× {g.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {/* FOOTER */}
+              <div style={{ marginTop: 30, paddingTop: 16, borderTop: '2px solid #cbd5e1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#94a3b8', marginBottom: 24 }}>
+                  <span>Généré le {new Date().toLocaleString('fr-FR')}</span>
+                  <span>{settings.name || 'Station'} — Fiche Journalière</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 64 }}>
+                  <div><p style={{ fontSize: 12, fontWeight: 900, color: '#334155', marginBottom: 36 }}>Signature Chef de Station :</p><div style={{ borderBottom: '2px solid #94a3b8' }} /></div>
+                  <div><p style={{ fontSize: 12, fontWeight: 900, color: '#334155', marginBottom: 36 }}>Cachet & Signature Gérant :</p><div style={{ borderBottom: '2px solid #94a3b8' }} /></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Body-level print portal — handlePrint clones the clean fiche into this. */}
       {ReactDOM.createPortal(
         <div id="daily-report-print-area-portal" />,
         document.body

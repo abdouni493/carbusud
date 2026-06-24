@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   TrendingUp, Fuel, ShoppingCart, DollarSign, Activity, AlertTriangle,
   Clock, Package, Droplets, ArrowUpRight, ArrowDownRight,
-  Zap, Users, Calendar, Target, ChevronDown, CheckCircle2
+  Zap, Users, Calendar, Target, ChevronDown, CheckCircle2,
+  SlidersHorizontal, Save, X, ToggleLeft, ToggleRight
 } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -231,6 +232,38 @@ const Dashboard = () => {
   } = useAppState();
   const dispatch = useAppDispatch();
   const [decAlertsOpen, setDecAlertsOpen] = useState(true);
+
+  // ── Décalage acceptance settings (per case) ───────────────────────────────
+  const [showDecalageSettings, setShowDecalageSettings] = useState(false);
+  const [decForm, setDecForm] = useState({
+    venteDirecteActif: settings?.decalagePositifActif !== false,
+    retourCuveActif: settings?.decalageNegatifActif !== false,
+    venteDirecteSeuil: settings?.decalagePositifSeuil ?? 0,
+    retourCuveSeuil: settings?.decalageNegatifSeuil ?? 0,
+  });
+  const openDecalageSettings = () => {
+    setDecForm({
+      venteDirecteActif: settings?.decalagePositifActif !== false,
+      retourCuveActif: settings?.decalageNegatifActif !== false,
+      venteDirecteSeuil: settings?.decalagePositifSeuil ?? 0,
+      retourCuveSeuil: settings?.decalageNegatifSeuil ?? 0,
+    });
+    setShowDecalageSettings(true);
+  };
+  const saveDecalageSettings = () => {
+    dispatch({
+      type: 'SET_SETTINGS',
+      payload: {
+        ...settings,
+        decalagePositifActif: decForm.venteDirecteActif,
+        decalageNegatifActif: decForm.retourCuveActif,
+        decalagePositifSeuil: decForm.venteDirecteSeuil,
+        decalageNegatifSeuil: decForm.retourCuveSeuil,
+      },
+    });
+    dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: 'Paramètres de décalage enregistrés' } });
+    setShowDecalageSettings(false);
+  };
   const activeDecalageAlerts = useMemo(
     () => brigadeDecalageAlerts.filter(a => !a.isDismissed && a.alertType !== 'CORRECT').slice(0, 20),
     [brigadeDecalageAlerts]
@@ -339,6 +372,99 @@ const Dashboard = () => {
         brigadeChefs={brigadeChefs}
         showBrigadeBadge={showFull || isChef}
       />
+
+      {/* Toolbar — décalage acceptance settings */}
+      {isAdmin && (
+        <div className="flex justify-end -mt-2">
+          <button
+            onClick={openDecalageSettings}
+            className="h-11 px-5 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-white shadow-lg hover:scale-[1.03] transition-all"
+            style={{ background: "linear-gradient(135deg,#001f5c,#003087)" }}
+          >
+            <SlidersHorizontal className="w-4 h-4" style={{ color: "#FFB800" }} />
+            Paramètres de Décalage
+          </button>
+        </div>
+      )}
+
+      {/* Décalage settings modal */}
+      <AnimatePresence>
+        {showDecalageSettings && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowDecalageSettings(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-2xl rounded-[2rem] relative z-10 overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[92vh]">
+              {/* Header */}
+              <div className="p-6 bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 text-white flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="font-black text-sm uppercase tracking-widest flex items-center gap-2"><SlidersHorizontal className="w-4 h-4" style={{ color: '#FFB800' }} /> Paramètres de Décalage</h3>
+                  <p className="text-[10px] text-yellow-300 font-bold mt-1">Définissez les écarts acceptables utilisés à l'étape de comparaison lors de la création des brigades</p>
+                </div>
+                <button onClick={() => setShowDecalageSettings(false)} className="hover:bg-white/20 p-2 rounded-lg transition-all"><X className="w-5 h-5" /></button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-bold text-slate-600">
+                  Pour chaque cas : si le cas est <b>désactivé</b>, aucune alerte n'est créée. Sinon, un écart <b>inférieur au seuil</b> est considéré acceptable (aucune alerte) ; au-delà du seuil, l'alerte est affichée sur le tableau de bord.
+                </div>
+
+                {/* Case 1: Vente directe (cuve a baissé plus que les pistolets) */}
+                {(() => {
+                  const cases = [
+                    {
+                      key: 'venteDirecte', title: 'Vente Directe', emoji: '🔴',
+                      desc: "La cuve a diminué plus que les pistolets n'ont débité (carburant vendu directement depuis la cuve).",
+                      actif: decForm.venteDirecteActif, seuil: decForm.venteDirecteSeuil,
+                      setActif: (v: boolean) => setDecForm(f => ({ ...f, venteDirecteActif: v })),
+                      setSeuil: (v: number) => setDecForm(f => ({ ...f, venteDirecteSeuil: v })),
+                      accent: 'red',
+                    },
+                    {
+                      key: 'retourCuve', title: 'Retour Cuve', emoji: '🟠',
+                      desc: "Les pistolets ont débité plus que ce qu'indique la cuve (possible retour cuve non enregistré).",
+                      actif: decForm.retourCuveActif, seuil: decForm.retourCuveSeuil,
+                      setActif: (v: boolean) => setDecForm(f => ({ ...f, retourCuveActif: v })),
+                      setSeuil: (v: number) => setDecForm(f => ({ ...f, retourCuveSeuil: v })),
+                      accent: 'orange',
+                    },
+                  ];
+                  return cases.map(c => (
+                    <div key={c.key} className={cn("rounded-2xl border-2 overflow-hidden", c.actif ? (c.accent === 'red' ? "border-red-200" : "border-orange-200") : "border-slate-200 opacity-80")}>
+                      <div className={cn("px-5 py-3 flex items-center justify-between", c.accent === 'red' ? "bg-red-50" : "bg-orange-50")}>
+                        <div>
+                          <h4 className={cn("text-[12px] font-black uppercase tracking-widest", c.accent === 'red' ? "text-red-800" : "text-orange-800")}>{c.emoji} {c.title}</h4>
+                          <p className="text-[10px] font-bold text-slate-500 mt-0.5 max-w-md">{c.desc}</p>
+                        </div>
+                        <button onClick={() => c.setActif(!c.actif)} className="flex-shrink-0">
+                          {c.actif
+                            ? <ToggleRight className={cn("w-10 h-10", c.accent === 'red' ? "text-red-500" : "text-orange-500")} />
+                            : <ToggleLeft className="w-10 h-10 text-slate-300" />}
+                        </button>
+                      </div>
+                      <div className="px-5 py-4 bg-white">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Seuil d'écart acceptable (litres)</label>
+                        <input type="number" step="0.1" min={0} disabled={!c.actif}
+                          value={c.seuil}
+                          onChange={e => c.setSeuil(parseFloat(e.target.value) || 0)}
+                          className="w-full h-11 px-3 rounded-xl border-2 border-slate-200 font-black text-blue-900 outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-400" />
+                        <p className="text-[10px] text-slate-400 font-bold mt-1">État : {c.actif ? <span className={c.accent === 'red' ? "text-red-600" : "text-orange-600"}>✓ Activé — alerte au-delà de {c.seuil} L</span> : <span>✗ Désactivé — jamais d'alerte</span>}</p>
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+
+              {/* Footer */}
+              <div className="p-5 bg-slate-50 border-t border-slate-200 flex gap-3 shrink-0">
+                <button onClick={() => setShowDecalageSettings(false)} className="flex-1 py-3 rounded-xl bg-white border-2 border-slate-200 text-slate-600 font-black text-[11px] uppercase hover:bg-slate-100 transition-all">Annuler</button>
+                <button onClick={saveDecalageSettings} className="flex-[2] py-3 rounded-xl bg-gradient-to-r from-blue-900 to-blue-800 text-white font-black text-[11px] uppercase tracking-widest flex items-center justify-center gap-2 hover:shadow-lg transition-all">
+                  <Save className="w-4 h-4" /> Enregistrer
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Résumé du Jour */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>

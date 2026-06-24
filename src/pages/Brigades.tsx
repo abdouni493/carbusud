@@ -174,6 +174,8 @@ const Brigades = () => {
     description: string;
     liters: number;
     amount: number;
+    byLiters?: boolean;   // when true, amount = liters × prix du carburant sélectionné
+    fuelType?: string;    // carburant choisi pour le calcul par litres
     clientId?: string;
     clientName?: string;
     clientRestCredit?: number;
@@ -208,6 +210,24 @@ const Brigades = () => {
     return match ? match.liters : (sorted.length > 0 ? sorted[sorted.length - 1].liters : 0);
   };
 
+  // GPL cuves are read as a percentage of capacity (gauge), not via the degrees
+  // conversion table. For GPL: value entered = % → liters = capacity × %/100.
+  const isGplTank = (tankId: string) => tanks.find(t => t.id === tankId)?.type === 'GPL';
+  const tankLevelToLiters = (tankId: string, value: number) => {
+    if (value === undefined || value === null || isNaN(value as any)) return 0;
+    const tank = tanks.find(t => t.id === tankId);
+    if (tank && tank.type === 'GPL') return tank.capacity * (value / 100);
+    return convertDegreesToLiters(tankId, value);
+  };
+  // ─── Start baselines ───────────────────────────────────────────────────────
+  // When creating, the "start" reference is the live system value. When editing
+  // an existing brigade, it must be that brigade's own recorded start references
+  // (the live values already reflect this brigade's end), so the comparison &
+  // sales recompute correctly.
+  const startTankLiters = (t: Tank) => editingBrigade ? (editingBrigade.startTankLevels?.[t.id]?.liters ?? t.current) : t.current;
+  const startTankDegrees = (t: Tank) => editingBrigade ? (editingBrigade.startTankLevels?.[t.id]?.degrees ?? t.degrees) : t.degrees;
+  const startNozzleIdx = (n: { id: string; lastIndex: number }) => editingBrigade ? (editingBrigade.startNozzleIndices?.[n.id] ?? n.lastIndex) : n.lastIndex;
+
   // ─── Wizard derived data ──────────────────────────────────────────────────
   // Brigade pompiste assignments built from the current wizard selections.
   const wizAssignments = useMemo<NonNullable<Brigade['pompisteAssignments']>>(() => {
@@ -233,14 +253,14 @@ const Brigades = () => {
     if (deg === undefined || deg === null) return false;
     const tank = tanks.find(t => t.id === tankId);
     if (!tank) return false;
-    return convertDegreesToLiters(tankId, deg) > tank.current + 0.001;
+    return tankLevelToLiters(tankId, deg) > startTankLiters(tank) + 0.001;
   };
   const nozzleEndError = (nozzleId: string): boolean => {
     const end = wizEndNozzleIndices[nozzleId];
     if (end === undefined || end === null) return false;
     const noz = pumpNozzles.find(n => n.id === nozzleId);
     if (!noz) return false;
-    return end < noz.lastIndex - 0.001;
+    return end < startNozzleIdx(noz) - 0.001;
   };
   const hasStep5Errors = useMemo(() => {
     const tankErr = tanks.some(t => tankEndError(t.id));
@@ -253,14 +273,18 @@ const Brigades = () => {
   const decalageAlerts = useMemo(() => {
     const posSeuil = settings.decalagePositifSeuil ?? 0;
     const negSeuil = settings.decalageNegatifSeuil ?? 0;
+    // Active flags decide whether a case is *tracked* at all (controlled from the
+    // Dashboard "Paramètres de Décalage" button). Default = active.
+    const venteDirecteActif = settings.decalagePositifActif !== false; // cuve a baissé plus
+    const retourCuveActif = settings.decalageNegatifActif !== false;   // pistolets ont débité plus
     return tanks.map(tank => {
-      const startLiters = tank.current;
+      const startLiters = startTankLiters(tank);
       const endDeg = wizEndTankLevels[tank.id];
-      const endLiters = endDeg !== undefined ? convertDegreesToLiters(tank.id, endDeg) : startLiters;
+      const endLiters = endDeg !== undefined ? tankLevelToLiters(tank.id, endDeg) : startLiters;
       const cuveDecalage = startLiters - endLiters; // liters that left the tank per cuve measurement
       const tankPumps = pumps.filter(p => p.tankId === tank.id);
       const tankNozzles = pumpNozzles.filter(n => n.status === 'Actif' && tankPumps.some(p => p.id === n.pumpId));
-      const nozzleDecalage = tankNozzles.reduce((s, n) => s + ((wizEndNozzleIndices[n.id] ?? n.lastIndex) - n.lastIndex), 0);
+      const nozzleDecalage = tankNozzles.reduce((s, n) => s + ((wizEndNozzleIndices[n.id] ?? startNozzleIdx(n)) - startNozzleIdx(n)), 0);
       const difference = nozzleDecalage - cuveDecalage;
       const price = settings.fuelPrices[tank.type] || 0;
       const amount = Math.abs(difference) * price;
@@ -268,16 +292,16 @@ const Brigades = () => {
       let suppressed = false;
       if (difference > 0) {
         // pistolets ont débité plus que la cuve n'a baissé → possible retour cuve
-        if (difference >= (negSeuil || 0.000001)) { type = 'RETOUR_CUVE'; suppressed = false; }
+        if (retourCuveActif && difference >= (negSeuil || 0.000001)) { type = 'RETOUR_CUVE'; suppressed = false; }
         else { type = 'CORRECT'; suppressed = true; }
       } else if (difference < 0) {
         // la cuve a baissé plus que les pistolets n'ont débité → possible vente directe
-        if (Math.abs(difference) >= (posSeuil || 0.000001)) { type = 'VENTE_DIRECTE'; suppressed = false; }
+        if (venteDirecteActif && Math.abs(difference) >= (posSeuil || 0.000001)) { type = 'VENTE_DIRECTE'; suppressed = false; }
         else { type = 'CORRECT'; suppressed = true; }
       }
       return { tankId: tank.id, tankName: tank.name, type, nozzleDecalage, cuveDecalage, difference, amount, suppressed };
     });
-  }, [tanks, pumps, pumpNozzles, wizEndTankLevels, wizEndNozzleIndices, settings]);
+  }, [tanks, pumps, pumpNozzles, wizEndTankLevels, wizEndNozzleIndices, settings, editingBrigade]);
 
   // Per-tank RETOUR_CUVE liters (returned to tank, not sold) for excluding from sales.
   const retourCuveByTank = useMemo(() => {
@@ -293,24 +317,40 @@ const Brigades = () => {
     tanks.forEach(tank => {
       const tankPumps = pumps.filter(p => p.tankId === tank.id);
       const tankNozzles = pumpNozzles.filter(n => n.status === 'Actif' && tankPumps.some(p => p.id === n.pumpId));
-      tankThroughput[tank.id] = tankNozzles.reduce((s, n) => s + Math.max(0, (wizEndNozzleIndices[n.id] ?? n.lastIndex) - n.lastIndex), 0);
+      tankThroughput[tank.id] = tankNozzles.reduce((s, n) => s + Math.max(0, (wizEndNozzleIndices[n.id] ?? startNozzleIdx(n)) - startNozzleIdx(n)), 0);
     });
     return presentAssignments.map(a => {
       const track = tracks.find(t => t.id === a.trackId);
       const trackPumps = pumps.filter(p => p.trackId === a.trackId);
       const trackNozzles = pumpNozzles.filter(n => n.status === 'Actif' && trackPumps.some(p => p.id === n.pumpId));
-      let liters = trackNozzles.reduce((s, n) => s + ((wizEndNozzleIndices[n.id] ?? n.lastIndex) - n.lastIndex), 0);
-      // subtract proportional retour-cuve share
+      // Each nozzle is priced with its OWN pump's carburant price so a piste
+      // serving several fuel types is computed exactly per type.
+      let litersSold = 0;
+      let theoretical = 0;
+      const byFuel: Record<string, { liters: number; price: number; amount: number }> = {};
       trackNozzles.forEach(n => {
         const pump = trackPumps.find(p => p.id === n.pumpId);
+        const fuel = (pump?.type || 'DIESEL') as Tank['type'];
+        const price = settings.fuelPrices[fuel] || 0;
+        let nLiters = Math.max(0, (wizEndNozzleIndices[n.id] ?? startNozzleIdx(n)) - startNozzleIdx(n));
+        // subtract proportional retour-cuve share for this nozzle's tank
         const tankId = pump?.tankId;
         if (tankId && retourCuveByTank[tankId] && tankThroughput[tankId] > 0) {
-          const nThrough = Math.max(0, (wizEndNozzleIndices[n.id] ?? n.lastIndex) - n.lastIndex);
-          liters -= retourCuveByTank[tankId] * (nThrough / tankThroughput[tankId]);
+          nLiters -= retourCuveByTank[tankId] * (nLiters / tankThroughput[tankId]);
         }
+        nLiters = Math.max(0, nLiters);
+        litersSold += nLiters;
+        theoretical += nLiters * price;
+        if (!byFuel[fuel]) byFuel[fuel] = { liters: 0, price, amount: 0 };
+        byFuel[fuel].liters += nLiters;
+        byFuel[fuel].amount += nLiters * price;
       });
-      const fuelType = (trackPumps[0]?.type || 'DIESEL') as Tank['type'];
-      const pricePerLiter = settings.fuelPrices[fuelType] || 0;
+      const fuelKeys = Object.keys(byFuel);
+      const primaryFuel = (fuelKeys[0] || trackPumps[0]?.type || 'DIESEL') as Tank['type'];
+      const mixedFuel = fuelKeys.length > 1;
+      const pricePerLiter = !mixedFuel
+        ? (byFuel[primaryFuel]?.price ?? settings.fuelPrices[primaryFuel] ?? 0)
+        : (litersSold > 0 ? theoretical / litersSold : 0); // weighted avg for display only
       const pompisteName = a.chefActingAsPompiste
         ? (brigadeChefs.find(c => c.id === a.pompisteId)?.name || 'Chef')
         : (pompistes.find(p => p.id === a.pompisteId)?.name || '—');
@@ -319,13 +359,16 @@ const Brigades = () => {
         name: pompisteName,
         trackId: a.trackId,
         trackName: track?.name || a.trackId,
-        fuelType,
-        litersSold: Math.max(0, liters),
+        fuelType: fuelKeys.length ? fuelKeys.join(' + ') : primaryFuel,
+        primaryFuel,
+        byFuel,
+        mixedFuel,
+        litersSold,
         pricePerLiter,
-        theoretical: Math.max(0, liters) * pricePerLiter,
+        theoretical,
       };
     });
-  }, [presentAssignments, pumps, pumpNozzles, tanks, tracks, wizEndNozzleIndices, settings, retourCuveByTank, pompistes, brigadeChefs]);
+  }, [presentAssignments, pumps, pumpNozzles, tanks, tracks, wizEndNozzleIndices, settings, retourCuveByTank, pompistes, brigadeChefs, editingBrigade]);
 
   const handleStartBrigade = () => {
     setIsSubmitting(true);
@@ -345,30 +388,36 @@ const Brigades = () => {
       const assignments = wizAssignments;
       const presentIds = assignments.filter(a => a.present && !a.chefActingAsPompiste).map(a => a.pompisteId);
 
-      // 6-7. start references (current system values)
+      // Edit vs create
+      const isEdit = !!editingBrigade;
+      const existingAccounting = isEdit ? brigadeAccountings.find(a => a.brigadeId === editingBrigade!.id) : undefined;
+
+      // 6-7. start references — live system values when creating, the brigade's
+      // own recorded start references when editing (helpers handle this).
       const startNozzleIndices: Record<string, number> = {};
       const startTankLevels: Record<string, { degrees: number; liters: number }> = {};
-      pumpNozzles.forEach(n => { startNozzleIndices[n.id] = n.lastIndex; });
-      tanks.forEach(t => { startTankLevels[t.id] = { degrees: t.degrees, liters: t.current }; });
+      pumpNozzles.forEach(n => { startNozzleIndices[n.id] = startNozzleIdx(n); });
+      tanks.forEach(t => { startTankLevels[t.id] = { degrees: startTankDegrees(t), liters: startTankLiters(t) }; });
 
       // 8-9. end references
       const endNozzleIndices: Record<string, number> = {};
-      pumpNozzles.forEach(n => { endNozzleIndices[n.id] = wizEndNozzleIndices[n.id] ?? n.lastIndex; });
+      pumpNozzles.forEach(n => { endNozzleIndices[n.id] = wizEndNozzleIndices[n.id] ?? startNozzleIdx(n); });
       const endTankLevelsObj: Record<string, { degrees: number; liters: number }> = {};
       tanks.forEach(t => {
         const deg = wizEndTankLevels[t.id];
+        // For GPL the stored `degrees` value is the gauge percentage.
         endTankLevelsObj[t.id] = deg !== undefined
-          ? { degrees: deg, liters: convertDegreesToLiters(t.id, deg) }
-          : { degrees: t.degrees, liters: t.current };
+          ? { degrees: deg, liters: tankLevelToLiters(t.id, deg) }
+          : { degrees: startTankDegrees(t), liters: startTankLiters(t) };
       });
 
-      const brigadeId = newId();
+      const brigadeId = isEdit ? editingBrigade!.id : newId();
 
       // ── Comptabilité: per-pompiste data + justifications ──────────────────
       const pompisteData: NonNullable<Brigade['pompisteData']> = {};
       const decalageSummary: Record<string, any> = {};
       const accJustifications: BrigadeAccountingJustification[] = [];
-      const accountingId = newId();
+      const accountingId = existingAccounting?.id || newId();
       let totalTheoretical = 0;
       let totalCash = 0;
       let totalJustif = 0;
@@ -395,21 +444,26 @@ const Brigades = () => {
           decalageSummary[s.pompisteId] = { money: ecartRestant, liters: 0 };
         }
 
-        // map justifications into accounting justifications
+        // map justifications into accounting justifications.
+        // Each justification carries its own carburant/price when computed by litres;
+        // otherwise the amount was entered directly (liters 0, price 0).
         justifs.forEach(j => {
+          const jFuel = j.fuelType || s.primaryFuel;
+          const jPrice = j.byLiters ? (settings.fuelPrices[jFuel as any] || 0) : 0;
+          const jLiters = j.byLiters ? (j.liters || 0) : 0;
           if (j.type === 'TAG' || j.type === 'TPE') {
             accJustifications.push({
               id: j.id, accountingId, clientId: '', amount: j.amount,
               justificationType: j.type, clientName: j.description || j.clientName,
-              fuelType: s.fuelType, liters: j.liters, pricePerLiter: s.pricePerLiter,
+              notes: j.description, fuelType: jFuel, liters: jLiters, pricePerLiter: jPrice,
               trackId: s.trackId, pompisteId: s.pompisteId,
             });
           } else {
             accJustifications.push({
               id: j.id, accountingId, clientId: j.clientId || '', amount: j.amount,
               justificationType: 'CLIENT', paymentMode: j.type === 'CLIENT_AVANCE' ? 'AVANCE' : 'CREDIT',
-              clientName: j.clientName, fuelType: s.fuelType, liters: j.liters,
-              pricePerLiter: s.pricePerLiter, trackId: s.trackId, pompisteId: s.pompisteId,
+              clientName: j.clientName, notes: j.description, fuelType: jFuel, liters: jLiters,
+              pricePerLiter: jPrice, trackId: s.trackId, pompisteId: s.pompisteId,
             });
           }
         });
@@ -417,8 +471,9 @@ const Brigades = () => {
 
       const totalRest = totalTheoretical - totalCash - totalJustif;
 
-      // ── Create the brigade (Clôturée) ─────────────────────────────────────
+      // ── Create / update the brigade (Clôturée) ────────────────────────────
       const newBrigade: Brigade = {
+        ...(isEdit ? editingBrigade! : {} as Brigade),
         id: brigadeId,
         date: sDate,
         shift: sType,
@@ -442,11 +497,11 @@ const Brigades = () => {
         activeNozzleIds: pumpNozzles.filter(n => n.status === 'Actif').map(n => n.id),
         pompisteData,
         canReactivate: false,
-        notes: currentUserName ? `Créé par: ${currentUserName}` : undefined,
+        notes: isEdit ? editingBrigade!.notes : (currentUserName ? `Créé par: ${currentUserName}` : undefined),
       };
-      dispatch({ type: 'ADD_BRIGADE', payload: newBrigade });
+      dispatch({ type: isEdit ? 'UPDATE_BRIGADE' : 'ADD_BRIGADE', payload: newBrigade });
 
-      // 5. Create the linked accounting record (status completed)
+      // 5. Create / update the linked accounting record (status completed)
       const accounting: BrigadeAccounting = {
         id: accountingId,
         brigadeId,
@@ -456,16 +511,20 @@ const Brigades = () => {
         tankSummary: tanks.map(t => ({ tankId: t.id, name: t.name, start: startTankLevels[t.id], end: endTankLevelsObj[t.id] })),
         nozzleSummary: pumpNozzles.filter(n => n.status === 'Actif').map(n => ({ nozzleId: n.id, start: startNozzleIndices[n.id], end: endNozzleIndices[n.id] })),
         decalageSummary,
-        cuveVerifications: {},
-        nozzleVerifications: {},
-        restAssignedAmount: 0,
+        cuveVerifications: existingAccounting?.cuveVerifications || {},
+        nozzleVerifications: existingAccounting?.nozzleVerifications || {},
+        restAssignedAmount: existingAccounting?.restAssignedAmount || 0,
+        restAssignedWorkerType: existingAccounting?.restAssignedWorkerType,
+        restAssignedWorkerId: existingAccounting?.restAssignedWorkerId,
         status: 'completed',
-        createdBy: currentUserName,
+        createdBy: existingAccounting?.createdBy || currentUserName,
         justifications: accJustifications,
       };
-      dispatch({ type: 'ADD_BRIGADE_ACCOUNTING', payload: accounting });
+      dispatch({ type: (isEdit && existingAccounting) ? 'UPDATE_BRIGADE_ACCOUNTING' : 'ADD_BRIGADE_ACCOUNTING', payload: accounting });
 
-      // 10. Dispatch décalage alerts (non-suppressed) for admin dashboard
+      // 10. Décalage alerts (non-suppressed) for admin dashboard.
+      // On edit, clear the brigade's previous alerts first so they don't pile up.
+      if (isEdit) dispatch({ type: 'DELETE_BRIGADE_DECALAGE_ALERTS_BY_BRIGADE', payload: brigadeId });
       const workersInfo = [
         ...(chef ? [{ id: chef.id, name: chef.name, role: 'chef_brigade' }] : []),
         ...assignments.filter(a => a.present).map(a => {
@@ -509,41 +568,126 @@ const Brigades = () => {
         }
       });
 
-      // Client avance / credit adjustments from justifications
-      const allJustifs = Object.values(pompisteJustifications).flat() as Array<{ type: string; clientId?: string; amount: number }>;
-      allJustifs.forEach(j => {
-        if (!j.clientId) return;
-        const client = clients.find(c => c.id === j.clientId);
-        if (!client) return;
-        if (j.type === 'CLIENT_AVANCE') {
-          dispatch({ type: 'UPDATE_CLIENT', payload: { ...client, advanceBalance: Math.max(0, (client.advanceBalance || 0) - j.amount) } });
-        } else if (j.type === 'CLIENT_CREDIT') {
-          dispatch({ type: 'UPDATE_CLIENT', payload: { ...client, debt: (client.debt || 0) + j.amount } });
-        }
-      });
+      // Client avance / credit adjustments + absences only on first creation.
+      // (On edit, client balances and absences recorded at creation are left
+      // untouched to avoid double-counting them.)
+      if (!isEdit) {
+        const allJustifs = Object.values(pompisteJustifications).flat() as Array<{ type: string; clientId?: string; amount: number }>;
+        allJustifs.forEach(j => {
+          if (!j.clientId) return;
+          const client = clients.find(c => c.id === j.clientId);
+          if (!client) return;
+          if (j.type === 'CLIENT_AVANCE') {
+            dispatch({ type: 'UPDATE_CLIENT', payload: { ...client, advanceBalance: Math.max(0, (client.advanceBalance || 0) - j.amount) } });
+          } else if (j.type === 'CLIENT_CREDIT') {
+            dispatch({ type: 'UPDATE_CLIENT', payload: { ...client, debt: (client.debt || 0) + j.amount } });
+          }
+        });
 
-      // Record absences for absent pompistes
-      assignments.filter(a => !a.present && !a.chefActingAsPompiste).forEach(a => {
-        const pompiste = pompistes.find(p => p.id === a.pompisteId);
-        if (pompiste) {
-          dispatch({
-            type: 'UPDATE_POMPISTE',
-            payload: {
-              ...pompiste,
-              absences: [...(pompiste.absences || []), {
-                id: newId(), date: sDate, cost: 0,
-                description: `Absent brigade ${sDate} ${sType}`, isPaid: false,
-              }],
-            },
-          });
-        }
-      });
+        // Record absences for absent pompistes
+        assignments.filter(a => !a.present && !a.chefActingAsPompiste).forEach(a => {
+          const pompiste = pompistes.find(p => p.id === a.pompisteId);
+          if (pompiste) {
+            dispatch({
+              type: 'UPDATE_POMPISTE',
+              payload: {
+                ...pompiste,
+                absences: [...(pompiste.absences || []), {
+                  id: newId(), date: sDate, cost: 0,
+                  description: `Absent brigade ${sDate} ${sType}`, isPaid: false,
+                }],
+              },
+            });
+          }
+        });
+      }
 
-      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Brigade créée et clôturée avec succès !" } });
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: isEdit ? "Brigade mise à jour avec succès !" : "Brigade créée et clôturée avec succès !" } });
       setShowModal(false);
+      setEditingBrigade(null);
       resetForm();
       setIsSubmitting(false);
     }, 600);
+  };
+
+  // Preload the full 7-step wizard with an existing brigade for editing.
+  const loadBrigadeIntoWizard = (b: Brigade) => {
+    const acc = brigadeAccountings.find(a => a.brigadeId === b.id);
+    setEditingBrigade(b);
+    setChefId(b.chefId || "");
+
+    // presence + piste overrides from stored assignments
+    const presence: Record<string, 'present' | 'absent'> = {};
+    const overrides: Record<string, string> = {};
+    let chefActing = false; let chefPiste = '';
+    (b.pompisteAssignments || []).forEach(a => {
+      if (a.chefActingAsPompiste) { chefActing = true; chefPiste = a.trackId || ''; return; }
+      presence[a.pompisteId] = a.present ? 'present' : 'absent';
+      if (a.trackId) overrides[a.pompisteId] = a.trackId;
+    });
+    const chef = brigadeChefs.find(c => c.id === b.chefId);
+    (chef?.pompisteIds || []).forEach(pid => { if (!presence[pid]) presence[pid] = 'present'; });
+    setPompistePresence(presence);
+    setPisteOverrides(overrides);
+    setChefAsPompiste(chefActing);
+    setChefPisteId(chefPiste);
+
+    // datetimes (string-split to avoid timezone drift)
+    const splitDT = (iso?: string) => {
+      if (iso && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso)) {
+        const [datePart, timePart] = iso.split('T');
+        const [hh, mm] = timePart.split(':');
+        return { date: datePart, hh, mm };
+      }
+      return null;
+    };
+    const sStart = splitDT(b.startDatetime) || { date: b.date, hh: (b.startTime || '06:00').split(':')[0], mm: (b.startTime || '06:00').split(':')[1] };
+    const sEnd = splitDT(b.endDatetime) || { date: b.date, hh: (b.endTime || '14:00').split(':')[0], mm: (b.endTime || '14:00').split(':')[1] };
+    setStartDate(sStart.date); setStartHour(sStart.hh); setStartMinute(sStart.mm);
+    setEndDate(sEnd.date); setEndHour(sEnd.hh); setEndMinute(sEnd.mm);
+
+    // end tank levels (degrees value; for GPL this is the gauge %)
+    const endTanks: Record<string, number> = {};
+    Object.entries(b.endTankLevels || {}).forEach(([tid, lvl]: [string, any]) => {
+      if (lvl && lvl.degrees !== undefined && lvl.degrees !== null) endTanks[tid] = lvl.degrees;
+    });
+    setWizEndTankLevels(endTanks);
+    setWizEndNozzleIndices({ ...(b.endNozzleIndices || {}) });
+
+    // payments + justifications from the accounting record
+    const payments: Record<string, number> = {};
+    Object.entries(b.pompisteData || {}).forEach(([pid, d]: [string, any]) => {
+      payments[pid] = d?.collected?.cash ?? d?.totalCollected ?? 0;
+    });
+    setPompistePayments(payments);
+
+    const justifMap: Record<string, NonNullable<typeof pompisteJustifications[string]>> = {};
+    (acc?.justifications || []).forEach(j => {
+      const pid = j.pompisteId || '';
+      if (!pid) return;
+      const type = j.justificationType === 'TAG' ? 'TAG'
+        : j.justificationType === 'TPE' ? 'TPE'
+        : (j.paymentMode === 'AVANCE' ? 'CLIENT_AVANCE' : 'CLIENT_CREDIT');
+      const byLiters = (j.liters || 0) > 0;
+      (justifMap[pid] = justifMap[pid] || []).push({
+        id: j.id,
+        type: type as any,
+        description: j.notes || ((type === 'TAG' || type === 'TPE') ? (j.clientName || '') : ''),
+        liters: j.liters || 0,
+        amount: j.amount || 0,
+        byLiters,
+        fuelType: j.fuelType,
+        clientId: j.clientId || undefined,
+        clientName: j.clientName,
+      });
+    });
+    setPompisteJustifications(justifMap);
+
+    setJustifClientSearch({});
+    setShowNewClientForm(null);
+    setStep(1);
+    setActionMenuOpen(null);
+    setShowModal(true);
   };
 
   const resetForm = () => {
@@ -715,7 +859,7 @@ const Brigades = () => {
           </p>
         </div>
         {(currentUserRole === 'admin' || currentUserRole === 'chef_brigade') && (
-          <button onClick={() => { setStep(1); setShowModal(true); }} className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3 italic">
+          <button onClick={() => { setEditingBrigade(null); resetForm(); setShowModal(true); }} className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3 italic">
             <Plus className="w-5 h-5 text-[#FFB800]" /> CRÉER NOUVELLE BRIGADE
           </button>
         )}
@@ -1016,16 +1160,7 @@ const Brigades = () => {
                                   <div className="divide-y divide-slate-100">
                                     {currentUserRole !== 'gerant' && (
                                       <button
-                                        onClick={() => {
-                                          setEditingBrigade(b);
-                                          setChefId(b.chefId);
-                                          setShiftType(b.shift as 'Matin' | 'Soir' | 'Nuit');
-                                          setShiftDate(b.date);
-                                          setStartTime(b.startTime);
-                                          setEndTime(b.endTime);
-                                          setShowEditModal(true);
-                                          setActionMenuOpen(null);
-                                        }}
+                                        onClick={() => { resetForm(); loadBrigadeIntoWizard(b); }}
                                         className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
                                       >
                                         <Pencil className="w-4 h-4" /> Modifier
@@ -1170,7 +1305,7 @@ const Brigades = () => {
                 description={hasActiveFilters ? "Aucune brigade ne correspond aux filtres sélectionnés" : "L'historique est vide pour le moment"}
                 {...(hasActiveFilters
                   ? { actionLabel: "✕ Effacer filtres", action: clearBrigadeFilters }
-                  : (currentUserRole !== 'gerant' ? { actionLabel: "Ouvrir Brigade", action: () => { setStep(1); setShowModal(true); } } : {}))}
+                  : (currentUserRole !== 'gerant' ? { actionLabel: "Ouvrir Brigade", action: () => { setEditingBrigade(null); resetForm(); setShowModal(true); } } : {}))}
               />
             </div>
           )}
@@ -1387,15 +1522,15 @@ const Brigades = () => {
 
           return (
             <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowModal(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => { setShowModal(false); setEditingBrigade(null); }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-3xl rounded-[2.5rem] relative z-10 overflow-hidden flex flex-col h-[92vh] shadow-2xl border border-slate-100">
                 {/* Header */}
                 <div className="p-6 bg-gradient-to-r from-blue-900 via-blue-800 to-blue-900 text-white flex justify-between items-center shrink-0">
                   <div>
-                    <h3 className="font-black text-xs uppercase tracking-widest italic">➕ Nouvelle Brigade</h3>
-                    <p className="text-[10px] text-yellow-300 font-bold mt-1">Création complète d'une brigade clôturée</p>
+                    <h3 className="font-black text-xs uppercase tracking-widest italic">{editingBrigade ? '✏️ Modifier Brigade' : '➕ Nouvelle Brigade'}</h3>
+                    <p className="text-[10px] text-yellow-300 font-bold mt-1">{editingBrigade ? `Édition de la brigade ${editingBrigade.id.slice(0, 8)}` : "Création complète d'une brigade clôturée"}</p>
                   </div>
-                  <button onClick={() => setShowModal(false)} className="hover:bg-white/20 p-2 rounded-lg transition-all"><X className="w-6 h-6" /></button>
+                  <button onClick={() => { setShowModal(false); setEditingBrigade(null); }} className="hover:bg-white/20 p-2 rounded-lg transition-all"><X className="w-6 h-6" /></button>
                 </div>
 
                 {/* Progress Bar */}
@@ -1635,20 +1770,27 @@ const Brigades = () => {
                       <div className="space-y-3">
                         <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest">Niveaux actuels des cuves</h4>
                         {tanks.map(t => {
-                          const pct = t.capacity > 0 ? Math.min(100, (t.current / t.capacity) * 100) : 0;
+                          const startLit = startTankLiters(t);
+                          const pct = t.capacity > 0 ? Math.min(100, (startLit / t.capacity) * 100) : 0;
+                          const isGpl = t.type === 'GPL';
                           return (
                             <div key={t.id} className="p-4 rounded-2xl border-2 border-slate-200 bg-white">
                               <div className="flex items-center justify-between mb-2">
                                 <p className="text-sm font-black text-slate-800">{t.name}</p>
-                                <span className="text-[9px] font-black px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full uppercase">{t.type}</span>
+                                <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full uppercase", isGpl ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700")}>{t.type}</span>
                               </div>
                               <div className="grid grid-cols-2 gap-3 text-[10px] mb-2">
-                                <div className="bg-slate-50 p-2 rounded"><p className="text-slate-400 font-bold uppercase">Degrés</p><p className="font-black text-slate-700">{t.degrees}°</p></div>
-                                <div className="bg-slate-50 p-2 rounded"><p className="text-slate-400 font-bold uppercase">Litres</p><p className="font-black text-blue-700">{t.current.toLocaleString('fr-FR')} L</p></div>
+                                {isGpl ? (
+                                  <div className="bg-orange-50 p-2 rounded"><p className="text-orange-400 font-bold uppercase">Pourcentage</p><p className="font-black text-orange-700">{pct.toFixed(1)} %</p></div>
+                                ) : (
+                                  <div className="bg-slate-50 p-2 rounded"><p className="text-slate-400 font-bold uppercase">Degrés</p><p className="font-black text-slate-700">{startTankDegrees(t)}°</p></div>
+                                )}
+                                <div className="bg-slate-50 p-2 rounded"><p className="text-slate-400 font-bold uppercase">Litres</p><p className="font-black text-blue-700">{startLit.toLocaleString('fr-FR')} L</p></div>
                               </div>
                               <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                                <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full" style={{ width: `${pct}%` }} />
+                                <div className={cn("h-full rounded-full", isGpl ? "bg-gradient-to-r from-orange-500 to-amber-400" : "bg-gradient-to-r from-blue-500 to-cyan-400")} style={{ width: `${pct}%` }} />
                               </div>
+                              {isGpl && <p className="text-[9px] text-orange-500 font-bold mt-1">GPL mesuré en pourcentage de la capacité ({t.capacity.toLocaleString('fr-FR')} L)</p>}
                             </div>
                           );
                         })}
@@ -1676,7 +1818,7 @@ const Brigades = () => {
                                         </div>
                                       </div>
                                       <div className="text-right">
-                                        <p className="text-sm font-black text-blue-700 tabular-nums">{n.lastIndex.toLocaleString('fr-FR')}</p>
+                                        <p className="text-sm font-black text-blue-700 tabular-nums">{startNozzleIdx(n).toLocaleString('fr-FR')}</p>
                                         <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase", n.status === 'Actif' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400')}>{n.status}</span>
                                       </div>
                                     </div>
@@ -1698,22 +1840,25 @@ const Brigades = () => {
                         <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-widest">Niveaux de fin des cuves</h4>
                         {tanks.map(t => {
                           const deg = wizEndTankLevels[t.id];
-                          const liters = deg !== undefined ? convertDegreesToLiters(t.id, deg) : undefined;
+                          const isGpl = t.type === 'GPL';
+                          const startLit = startTankLiters(t);
+                          const liters = deg !== undefined ? tankLevelToLiters(t.id, deg) : undefined;
+                          const startPct = t.capacity > 0 ? Math.min(100, (startLit / t.capacity) * 100) : 0;
                           const err = tankEndError(t.id);
                           return (
-                            <div key={t.id} className={cn("p-4 rounded-2xl border-2 bg-white", err ? "border-red-400" : "border-slate-200")}>
+                            <div key={t.id} className={cn("p-4 rounded-2xl border-2 bg-white", err ? "border-red-400" : isGpl ? "border-orange-200" : "border-slate-200")}>
                               <div className="flex items-center justify-between mb-2">
-                                <p className="text-sm font-black text-slate-800">{t.name}</p>
-                                <p className="text-[9px] text-slate-400 font-bold">Début: {t.degrees}° · {t.current.toLocaleString('fr-FR')} L</p>
+                                <p className="text-sm font-black text-slate-800">{t.name} {isGpl && <span className="text-[9px] font-black px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full uppercase">GPL</span>}</p>
+                                <p className="text-[9px] text-slate-400 font-bold">Début: {isGpl ? `${startPct.toFixed(1)} %` : `${startTankDegrees(t)}°`} · {startLit.toLocaleString('fr-FR')} L</p>
                               </div>
                               <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                  <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">Degrés de fin</label>
-                                  <input type="number" step="0.1" className={cn("input-field h-11 font-black", err && "border-red-400 text-red-600")} value={deg ?? ''} onChange={e => setWizEndTankLevels(prev => ({ ...prev, [t.id]: e.target.value === '' ? undefined as any : parseFloat(e.target.value) }))} />
+                                  <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">{isGpl ? 'Pourcentage de fin (%)' : 'Degrés de fin'}</label>
+                                  <input type="number" step={isGpl ? '0.1' : '0.1'} min={0} max={isGpl ? 100 : undefined} className={cn("input-field h-11 font-black", err && "border-red-400 text-red-600")} value={deg ?? ''} onChange={e => setWizEndTankLevels(prev => ({ ...prev, [t.id]: e.target.value === '' ? undefined as any : parseFloat(e.target.value) }))} />
                                 </div>
                                 <div>
                                   <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">Litres (auto)</label>
-                                  <div className="h-11 flex items-center px-3 bg-slate-50 rounded-xl font-black text-blue-700 text-sm">{liters !== undefined ? `${liters.toLocaleString('fr-FR')} L` : '—'}</div>
+                                  <div className="h-11 flex items-center px-3 bg-slate-50 rounded-xl font-black text-blue-700 text-sm">{liters !== undefined ? `${liters.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} L` : '—'}</div>
                                 </div>
                               </div>
                               {err && <p className="text-[10px] text-red-600 font-bold mt-2">⚠️ Niveau de fin supérieur au niveau actuel — vérifiez si un approvisionnement n'a pas été enregistré</p>}
@@ -1736,6 +1881,7 @@ const Brigades = () => {
                                 {trackPumps.map(pump => pumpNozzles.filter(n => n.pumpId === pump.id && n.status === 'Actif').map(n => {
                                   const err = nozzleEndError(n.id);
                                   const val = wizEndNozzleIndices[n.id];
+                                  const startIdx = startNozzleIdx(n);
                                   return (
                                     <div key={n.id} className={cn("p-2.5 bg-white rounded-lg border transition-colors", err ? "border-red-300" : "border-slate-100")}>
                                       <div className="flex items-center gap-3">
@@ -1748,10 +1894,10 @@ const Brigades = () => {
                                           >
                                             {n.name}
                                           </motion.p>
-                                          <p className="text-[9px] text-slate-400">{pump.name} · Début: {n.lastIndex.toLocaleString('fr-FR')}</p>
+                                          <p className="text-[9px] text-slate-400">{pump.name} · Début: {startIdx.toLocaleString('fr-FR')}</p>
                                         </div>
                                         <input
-                                          type="number" step="0.01" min={n.lastIndex} placeholder="Index fin"
+                                          type="number" step="0.01" min={startIdx} placeholder="Index fin"
                                           className={cn("w-32 input-field h-10 font-black text-right transition-colors", err && "border-red-400 text-red-600 bg-red-50")}
                                           value={val ?? ''}
                                           onChange={e => setWizEndNozzleIndices(prev => ({ ...prev, [n.id]: e.target.value === '' ? undefined as any : parseFloat(e.target.value) }))}
@@ -1766,7 +1912,7 @@ const Brigades = () => {
                                             transition={{ duration: 0.3 }}
                                             className="text-[10px] text-red-600 font-bold mt-1 overflow-hidden"
                                           >
-                                            ⚠️ L'index de fin ne peut pas être inférieur à l'index de début ({n.lastIndex.toLocaleString('fr-FR')})
+                                            ⚠️ L'index de fin ne peut pas être inférieur à l'index de début ({startIdx.toLocaleString('fr-FR')})
                                           </motion.p>
                                         )}
                                       </AnimatePresence>
@@ -1844,7 +1990,7 @@ const Brigades = () => {
                                   <td className="px-3 py-2">{s.trackName}</td>
                                   <td className="px-3 py-2">{s.fuelType}</td>
                                   <td className="px-3 py-2 text-right tabular-nums">{s.litersSold.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}</td>
-                                  <td className="px-3 py-2 text-right tabular-nums">{s.pricePerLiter.toLocaleString('fr-FR')}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{s.mixedFuel ? <span title={Object.entries(s.byFuel).map(([f, v]: [string, any]) => `${f}: ${v.price}`).join(' · ')} className="text-purple-700">Mixte</span> : s.pricePerLiter.toLocaleString('fr-FR')}</td>
                                   <td className="px-3 py-2 text-right tabular-nums text-blue-700">{s.theoretical.toLocaleString('fr-FR', { maximumFractionDigits: 0 })}</td>
                                 </tr>
                               ))}
@@ -1891,8 +2037,8 @@ const Brigades = () => {
 
                               {/* Justification buttons */}
                               <div className="flex flex-wrap gap-2">
-                                <button onClick={() => addJustif({ id: newId(), type: 'TAG', description: '', liters: 0, amount: 0 })} className="px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-[10px] font-black uppercase hover:bg-purple-200">+ TAG</button>
-                                <button onClick={() => addJustif({ id: newId(), type: 'TPE', description: '', liters: 0, amount: 0 })} className="px-3 py-1.5 rounded-lg bg-cyan-100 text-cyan-700 text-[10px] font-black uppercase hover:bg-cyan-200">+ TPE</button>
+                                <button onClick={() => addJustif({ id: newId(), type: 'TAG', description: '', liters: 0, amount: 0, byLiters: false, fuelType: s.primaryFuel })} className="px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-[10px] font-black uppercase hover:bg-purple-200">+ TAG</button>
+                                <button onClick={() => addJustif({ id: newId(), type: 'TPE', description: '', liters: 0, amount: 0, byLiters: false, fuelType: s.primaryFuel })} className="px-3 py-1.5 rounded-lg bg-cyan-100 text-cyan-700 text-[10px] font-black uppercase hover:bg-cyan-200">+ TPE</button>
                                 <button onClick={() => setShowNewClientForm(showNewClientForm === `credit-${s.pompisteId}` ? null : `credit-${s.pompisteId}`)} className="px-3 py-1.5 rounded-lg bg-orange-100 text-orange-700 text-[10px] font-black uppercase hover:bg-orange-200">+ Crédit Client</button>
                                 <button onClick={() => setShowNewClientForm(showNewClientForm === `avance-${s.pompisteId}` ? null : `avance-${s.pompisteId}`)} className="px-3 py-1.5 rounded-lg bg-teal-100 text-teal-700 text-[10px] font-black uppercase hover:bg-teal-200">+ Avance Client</button>
                               </div>
@@ -1913,7 +2059,7 @@ const Brigades = () => {
                                     {matches.map(c => (
                                       <button key={c.id} onClick={() => {
                                         const litersDefault = 0;
-                                        addJustif({ id: newId(), type: isAvance ? 'CLIENT_AVANCE' : 'CLIENT_CREDIT', description: c.name, liters: litersDefault, amount: 0, clientId: c.id, clientName: c.name, clientRestCredit: isAvance ? (c.advanceBalance || 0) : (c.creditLimit - c.debt) });
+                                        addJustif({ id: newId(), type: isAvance ? 'CLIENT_AVANCE' : 'CLIENT_CREDIT', description: '', liters: litersDefault, amount: 0, byLiters: false, fuelType: s.primaryFuel, clientId: c.id, clientName: c.name, clientRestCredit: isAvance ? (c.advanceBalance || 0) : (c.creditLimit - c.debt) });
                                         setShowNewClientForm(null);
                                         setJustifClientSearch(prev => ({ ...prev, [s.pompisteId]: '' }));
                                       }} className="w-full text-left p-2 bg-white rounded-lg border border-slate-100 hover:border-blue-300 flex items-center justify-between">
@@ -1952,7 +2098,7 @@ const Brigades = () => {
                                         if (!newClientDraft.name.trim()) return;
                                         const nc: Client = { id: newId(), name: newClientDraft.name.trim(), phone: newClientDraft.phone, balance: 0, debt: 0, creditLimit: 0, paymentDelay: 0, type: newClientDraft.type, paymentMode: newClientDraft.paymentMode, advanceBalance: 0, transactionHistory: [] };
                                         dispatch({ type: 'ADD_CLIENT', payload: nc });
-                                        addJustif({ id: newId(), type: isAvance ? 'CLIENT_AVANCE' : 'CLIENT_CREDIT', description: nc.name, liters: 0, amount: 0, clientId: nc.id, clientName: nc.name, clientRestCredit: 0 });
+                                        addJustif({ id: newId(), type: isAvance ? 'CLIENT_AVANCE' : 'CLIENT_CREDIT', description: '', liters: 0, amount: 0, byLiters: false, fuelType: s.primaryFuel, clientId: nc.id, clientName: nc.name, clientRestCredit: 0 });
                                         setShowNewClientForm(null);
                                       }} className="flex-1 py-2 rounded-lg bg-blue-900 text-white text-[10px] font-black uppercase">Créer & ajouter</button>
                                     </div>
@@ -1963,28 +2109,71 @@ const Brigades = () => {
                               {/* Justification list */}
                               {justifs.length > 0 && (
                                 <div className="space-y-2">
-                                  {justifs.map(j => (
-                                    <div key={j.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
+                                  {justifs.map(j => {
+                                    const patch = (changes: Partial<typeof j>) => setPompisteJustifications(prev => ({ ...prev, [s.pompisteId]: (prev[s.pompisteId] || []).map(x => x.id === j.id ? { ...x, ...changes } : x) }));
+                                    const fuelOptions = Object.keys(settings.fuelPrices || {});
+                                    return (
+                                    <div key={j.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 uppercase">{j.type.replace('CLIENT_', '')}</span>
+                                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 uppercase">
+                                          {j.type === 'CLIENT_CREDIT' ? 'CRÉDIT CLIENT' : j.type === 'CLIENT_AVANCE' ? 'AVANCE CLIENT' : j.type}
+                                        </span>
                                         <button onClick={() => removeJustif(j.id)} className="text-red-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
                                       </div>
-                                      <div className="grid grid-cols-2 gap-2">
-                                        {(j.type === 'TAG' || j.type === 'TPE') && (
-                                          <input placeholder="Description" value={j.description} onChange={e => setPompisteJustifications(prev => ({ ...prev, [s.pompisteId]: (prev[s.pompisteId] || []).map(x => x.id === j.id ? { ...x, description: e.target.value } : x) }))} className="input-field h-9 text-xs font-bold" />
-                                        )}
-                                        {(j.type === 'CLIENT_CREDIT' || j.type === 'CLIENT_AVANCE') && (
-                                          <div className="h-9 flex items-center px-2 bg-white rounded-lg text-xs font-black text-slate-700 truncate">{j.clientName} {j.clientRestCredit !== undefined && <span className="text-[9px] text-slate-400 ml-1">({j.clientRestCredit.toLocaleString('fr-FR')})</span>}</div>
-                                        )}
-                                        <input type="number" placeholder="Litres" value={j.liters || ''} onChange={e => {
-                                          const liters = parseFloat(e.target.value) || 0;
-                                          const amount = liters * s.pricePerLiter;
-                                          setPompisteJustifications(prev => ({ ...prev, [s.pompisteId]: (prev[s.pompisteId] || []).map(x => x.id === j.id ? { ...x, liters, amount } : x) }));
-                                        }} className="input-field h-9 text-xs font-bold" />
-                                      </div>
-                                      <p className="text-[10px] font-black text-right text-blue-700">Montant: {(j.amount || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} DZD</p>
+
+                                      {/* Client name (credit/avance) */}
+                                      {(j.type === 'CLIENT_CREDIT' || j.type === 'CLIENT_AVANCE') && (
+                                        <div className="h-8 flex items-center px-2 bg-white rounded-lg text-xs font-black text-slate-700 truncate border border-slate-100">👤 {j.clientName} {j.clientRestCredit !== undefined && <span className="text-[9px] text-slate-400 ml-1">({j.clientRestCredit.toLocaleString('fr-FR')})</span>}</div>
+                                      )}
+
+                                      {/* Description (always) */}
+                                      <input placeholder="Description" value={j.description} onChange={e => patch({ description: e.target.value })} className="input-field h-9 text-xs font-bold w-full" />
+
+                                      {/* Toggle: direct amount vs liter-based calc */}
+                                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                                        <input type="checkbox" checked={!!j.byLiters} onChange={e => {
+                                          const byLiters = e.target.checked;
+                                          const price = settings.fuelPrices[(j.fuelType || s.primaryFuel) as any] || 0;
+                                          patch({ byLiters, ...(byLiters ? { amount: (j.liters || 0) * price, fuelType: j.fuelType || s.primaryFuel } : {}) });
+                                        }} className="w-3.5 h-3.5 accent-blue-700" />
+                                        <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Calculer par litres (carburant)</span>
+                                      </label>
+
+                                      {j.byLiters ? (
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">Carburant</label>
+                                            <select value={j.fuelType || s.primaryFuel} onChange={e => {
+                                              const fuelType = e.target.value;
+                                              const price = settings.fuelPrices[fuelType as any] || 0;
+                                              patch({ fuelType, amount: (j.liters || 0) * price });
+                                            }} className="input-field h-9 text-xs font-bold">
+                                              {fuelOptions.map(f => <option key={f} value={f}>{f} ({(settings.fuelPrices[f as any] || 0).toLocaleString('fr-FR')} DA/L)</option>)}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">Litres</label>
+                                            <input type="number" placeholder="Litres" value={j.liters || ''} onChange={e => {
+                                              const liters = parseFloat(e.target.value) || 0;
+                                              const price = settings.fuelPrices[(j.fuelType || s.primaryFuel) as any] || 0;
+                                              patch({ liters, amount: liters * price });
+                                            }} className="input-field h-9 text-xs font-bold" />
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div>
+                                          <label className="text-[9px] font-black text-slate-400 uppercase mb-1 block">Montant (DA)</label>
+                                          <input type="number" placeholder="Montant total" value={j.amount || ''} onChange={e => patch({ amount: parseFloat(e.target.value) || 0, liters: 0 })} className="input-field h-9 text-xs font-bold" />
+                                        </div>
+                                      )}
+
+                                      <p className="text-[10px] font-black text-right text-blue-700">
+                                        Montant: {(j.amount || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} DZD
+                                        {j.byLiters && j.liters ? <span className="text-slate-400 font-bold ml-1">({j.liters.toLocaleString('fr-FR')} L × {(settings.fuelPrices[(j.fuelType || s.primaryFuel) as any] || 0).toLocaleString('fr-FR')})</span> : null}
+                                      </p>
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               )}
 
@@ -2053,7 +2242,7 @@ const Brigades = () => {
                     disabled={isSubmitting || !canGoNext}
                     className="flex-[2] bg-gradient-to-r from-blue-900 to-blue-800 hover:shadow-lg text-white font-black uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2 rounded-lg py-3 transition-all transform hover:-translate-y-0.5 text-[10px]"
                   >
-                    {isSubmitting ? (<><LoaderCircle className="w-4 h-4 animate-spin" />Traitement...</>) : step < 7 ? (<>Suivant <ArrowRight className="w-4 h-4" /></>) : 'Créer la Brigade'}
+                    {isSubmitting ? (<><LoaderCircle className="w-4 h-4 animate-spin" />Traitement...</>) : step < 7 ? (<>Suivant <ArrowRight className="w-4 h-4" /></>) : (editingBrigade ? 'Mettre à jour' : 'Créer la Brigade')}
                   </motion.button>
                 </div>
               </motion.div>

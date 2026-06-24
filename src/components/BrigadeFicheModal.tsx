@@ -97,6 +97,8 @@ const BrigadeFicheModal: React.FC<Props> = ({
   const decalageAlerts = useMemo(() => {
     const posSeuil = settings.decalagePositifSeuil ?? 0;
     const negSeuil = settings.decalageNegatifSeuil ?? 0;
+    const venteDirecteActif = settings.decalagePositifActif !== false;
+    const retourCuveActif = settings.decalageNegatifActif !== false;
     return tankRows.map(({ tank, startL, endL }) => {
       const cuveDiff = startL - endL;
       const tankPumps = pumps.filter(p => p.tankId === tank.id);
@@ -104,8 +106,8 @@ const BrigadeFicheModal: React.FC<Props> = ({
       const difference = nozzleDiff - cuveDiff;
       const price = settings.fuelPrices[tank.type] || 0;
       let type: 'CORRECT' | 'RETOUR_CUVE' | 'VENTE_DIRECTE' = 'CORRECT';
-      if (difference > 0 && difference >= (negSeuil || 0.000001)) type = 'RETOUR_CUVE';
-      else if (difference < 0 && Math.abs(difference) >= (posSeuil || 0.000001)) type = 'VENTE_DIRECTE';
+      if (difference > 0 && retourCuveActif && difference >= (negSeuil || 0.000001)) type = 'RETOUR_CUVE';
+      else if (difference < 0 && venteDirecteActif && Math.abs(difference) >= (posSeuil || 0.000001)) type = 'VENTE_DIRECTE';
       return { tank, cuveDiff, nozzleDiff, difference, amount: Math.abs(difference) * price, type };
     });
   }, [tankRows, pumps, nozzleRows, settings]);

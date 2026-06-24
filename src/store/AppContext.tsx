@@ -854,6 +854,7 @@ type AppAction =
   | { type: 'SET_TPE_TRANSACTIONS'; payload: TpeTransaction[] }
   | { type: 'ADD_BRIGADE_DECALAGE_ALERT'; payload: BrigadeDecalageAlert }
   | { type: 'DISMISS_BRIGADE_DECALAGE_ALERT'; payload: string }
+  | { type: 'DELETE_BRIGADE_DECALAGE_ALERTS_BY_BRIGADE'; payload: string }
   | { type: 'SET_BRIGADE_DECALAGE_ALERTS'; payload: BrigadeDecalageAlert[] }
   | { type: 'RESTORE_STATE'; payload: AppState };
 
@@ -1065,6 +1066,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, brigadeDecalageAlerts: [action.payload, ...(state.brigadeDecalageAlerts || [])] };
     case 'DISMISS_BRIGADE_DECALAGE_ALERT':
       return { ...state, brigadeDecalageAlerts: (state.brigadeDecalageAlerts || []).map(a => a.id === action.payload ? { ...a, isDismissed: true } : a) };
+    case 'DELETE_BRIGADE_DECALAGE_ALERTS_BY_BRIGADE':
+      return { ...state, brigadeDecalageAlerts: (state.brigadeDecalageAlerts || []).filter(a => a.brigadeId !== action.payload) };
     case 'SET_BRIGADE_DECALAGE_ALERTS':
       return { ...state, brigadeDecalageAlerts: action.payload };
 
@@ -1340,6 +1343,9 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       }
       case 'DISMISS_BRIGADE_DECALAGE_ALERT':
         await supabase.from('brigade_decalage_alerts').update({ is_dismissed: true }).eq('id', action.payload);
+        break;
+      case 'DELETE_BRIGADE_DECALAGE_ALERTS_BY_BRIGADE':
+        await supabase.from('brigade_decalage_alerts').delete().eq('brigade_id', action.payload);
         break;
       case 'ADD_BRIGADE_ACCOUNTING': {
         const a = action.payload;
