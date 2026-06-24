@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef } from "react";
+import ReactDOM from "react-dom";
 import {
   FileText, Calendar, Download, Printer, Droplets, Users,
   CreditCard, ShoppingCart, Package, TrendingDown, TrendingUp,
@@ -9,8 +10,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import { useAppState, useAppDispatch } from "../store/AppContext";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+import { exportElementToPdf, printDocumentMode } from "../lib/pdf";
 import Skeleton from "../components/Skeleton";
 
 /* ─── Brand palette (mirrors the Sidebar) ─── */
@@ -77,7 +77,7 @@ const DailyReport = () => {
   const {
     tanks, brigades, pumps, pumpNozzles, deliveryNotes, products, expenses,
     fuelSales, shopSales, settings, brigadeChefs, pompistes, purchases, clients,
-    tracks, brigadeAccountings
+    tracks, brigadeAccountings, gerants, magasinWorkers
   } = useAppState();
 
   const reportRef = useRef<HTMLDivElement>(null);
@@ -279,103 +279,68 @@ const DailyReport = () => {
     const clientDebts  = clients.filter(c => c.debt > 0)
                                 .reduce((a, c) => a + c.debt, 0);
 
+    /* 9. WORKER PAYMENTS (in range, by paymentDate) */
+    const collectWorker = (list: any[], type: string) => list.flatMap((w: any) =>
+      (w.paymentRecord || [])
+        .filter((p: any) => p.paymentDate && inRange(p.paymentDate))
+        .map((p: any) => ({
+          workerName: w.name, workerType: type,
+          baseSalary: p.baseSalary || 0, totalAcomptes: p.totalAcomptes || 0,
+          totalAbsences: p.totalAbsences || 0, bonusDecalage: p.bonusDecalage || 0,
+          retenueDecalage: p.retenueDecalage || 0, netSalary: p.netSalary || 0,
+          month: p.month, isPaid: p.isPaid,
+        }))
+    );
+    const workerPayments = [
+      ...collectWorker(pompistes, 'Pompiste'),
+      ...collectWorker(brigadeChefs, 'Chef'),
+      ...collectWorker(gerants || [], 'Gérant'),
+      ...collectWorker(magasinWorkers || [], 'Magasin'),
+    ];
+    const totalWorkerPayments = workerPayments.reduce((a, p) => a + p.netSalary, 0);
+
     return {
       tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
       topShopProds, fuelRevenue, totalRevenue, fuelPurchasesTotal, shopPurchasesTotal,
       totalExpenses, expByCategory, grossProfit, netProfit, clientDebts,
+      workerPayments, totalWorkerPayments,
       fuelCount: selFuel.length, shopCount: selShop.length,
       totalLiters: selFuel.reduce((a, c) => a + c.liters, 0),
     };
   }, [isGenerated, startDate, endDate, fuelSales, shopSales, expenses, brigades,
       tanks, pumps, pumpNozzles, deliveryNotes, purchases, brigadeChefs, pompistes,
-      clients, tracks, brigadeAccountings, settings]);
+      clients, tracks, brigadeAccountings, settings, gerants, magasinWorkers]);
 
-  /* ─── Export ─── */
-  const exportPDF = async () => {
+  /* ─── Export (oklch-safe, paginated A4 — see lib/pdf.ts) ─── */
+  const handleExportPDF = async () => {
     if (!reportRef.current) return;
-
-    // Temporarily make the element visible and full height for capture
-    const el = reportRef.current;
-    const originalOverflow = el.style.overflow;
-    el.style.overflow = 'visible';
-
-    try {
-      const canvas = await html2canvas(el, {
-        scale: 1.5,
-        backgroundColor: '#ffffff',
-        useCORS: true,
-        allowTaint: false,
-        logging: false,
-        scrollX: 0,
-        scrollY: -window.scrollY,
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
-      });
-
-      const pdf = new jsPDF('p', 'mm', 'a4');
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const margin = 10; // 10mm margin
-      const contentWidth = pdfWidth - margin * 2;
-      const contentHeight = pdfHeight - margin * 2;
-
-      // Full-image dimensions in PDF units
-      const imgWidth = contentWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      // Add pages as needed
-      let yOffset = 0;
-      let pageNum = 0;
-
-      while (yOffset < imgHeight) {
-        if (pageNum > 0) pdf.addPage();
-
-        // Add station header on each page
-        pdf.setFillColor(0, 18, 51); // blue-900
-        pdf.rect(0, 0, pdfWidth, 12, 'F');
-        pdf.setTextColor(255, 184, 0); // gold
-        pdf.setFontSize(8);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text(`${settings.name || 'Station'} — Fiche Journalière — ${startDate} → ${endDate}`, margin, 8);
-        pdf.setTextColor(255, 255, 255);
-        pdf.text(`Page ${pageNum + 1}`, pdfWidth - margin - 10, 8);
-
-        // Slice of the source canvas for this page
-        const sourceY = (yOffset / imgHeight) * canvas.height;
-        const sourceH = Math.min(
-          (contentHeight / imgHeight) * canvas.height,
-          canvas.height - sourceY
-        );
-
-        const pageCanvas = document.createElement('canvas');
-        pageCanvas.width = canvas.width;
-        pageCanvas.height = sourceH;
-        const ctx = pageCanvas.getContext('2d')!;
-        ctx.drawImage(canvas, 0, sourceY, canvas.width, sourceH, 0, 0, canvas.width, sourceH);
-
-        const pageImg = pageCanvas.toDataURL('image/png');
-        const sliceHeight = (sourceH / canvas.height) * imgHeight;
-
-        pdf.addImage(pageImg, 'PNG', margin, 14, contentWidth, Math.min(sliceHeight, contentHeight - 4));
-
-        yOffset += contentHeight;
-        pageNum++;
-      }
-
-      pdf.save(`Fiche_Journaliere_${startDate}_${endDate}.pdf`);
-    } finally {
-      el.style.overflow = originalOverflow;
-    }
+    setIsPdfLoading(true);
+    const ok = await exportElementToPdf(
+      reportRef.current,
+      `Fiche_Journaliere_${startDate}_${endDate}.pdf`,
+      { header: `${settings.name || 'Station'} — Fiche Journalière — ${startDate} → ${endDate}`, scale: 1.6 }
+    );
+    setIsPdfLoading(false);
+    if (!ok) alert("Échec de la génération du PDF. Réessayez ou utilisez Imprimer → Enregistrer en PDF.");
   };
 
-  const handleExportPDF = async () => {
-    setIsPdfLoading(true);
-    try {
-      await exportPDF();
-    } finally {
-      setIsPdfLoading(false);
+  /* ─── Print: clone the live report into a body-level portal, then flip the
+        body into document-print mode so the global thermal-receipt print CSS
+        is bypassed and the report prints on full A4 pages. ─── */
+  const handlePrint = () => {
+    const el = reportRef.current;
+    const portal = document.getElementById('daily-report-print-area-portal');
+    if (el && portal) {
+      portal.innerHTML = '';
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.style.overflow = 'visible';
+      clone.style.maxHeight = 'none';
+      clone.style.height = 'auto';
+      portal.appendChild(clone);
+      const cleanup = () => { portal.innerHTML = ''; window.removeEventListener('afterprint', cleanup); };
+      window.addEventListener('afterprint', cleanup);
     }
+    printDocumentMode();
   };
 
   const sections = [
@@ -385,6 +350,7 @@ const DailyReport = () => {
     { id: "finance",   label: "Encaissements"},
     { id: "shop",      label: "Magasin"      },
     { id: "purchases", label: "Achats"       },
+    { id: "salaries",  label: "Salaires"     },
     { id: "bilan",     label: "Bilan"        },
   ];
 
@@ -416,8 +382,8 @@ const DailyReport = () => {
               {isPdfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               {isPdfLoading ? 'Export...' : 'Télécharger PDF'}
             </button>
-            <button onClick={() => window.print()}
-              className="h-12 px-6 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl transition-all hover:scale-105"
+            <button onClick={handlePrint}
+              className="h-12 px-6 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl transition-all hover:scale-105 no-print"
               style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
               <Printer className="w-4 h-4" /> Imprimer
             </button>
@@ -1030,7 +996,45 @@ const DailyReport = () => {
             )}
           </section>
 
-          {/* ─── SECTION 7: BILAN FINAL ─── */}
+          {/* ─── SECTION: SALAIRES / PAIEMENTS TRAVAILLEURS ─── */}
+          <section id="section-salaries" className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100 space-y-6">
+            <SectionHeader num="07" label="Paiements des Travailleurs" icon={Users}
+              colorClass="bg-indigo-50 text-indigo-700" />
+            {reportData.workerPayments.length === 0 ? (
+              <p className="text-slate-300 font-black text-sm text-center py-8 uppercase tracking-widest">Aucun paiement sur cette période</p>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-blue-900 text-white">
+                    {['Travailleur', 'Type', 'Mois', 'Salaire Base', 'Acomptes', 'Absences', 'Bonus', 'Retenue', 'Net Payé'].map(h => (
+                      <th key={h} className="px-3 py-2 text-left text-[9px] font-black uppercase tracking-widest border border-blue-800">{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {reportData.workerPayments.map((p: any, i: number) => (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="px-3 py-2 font-black border border-slate-200">{p.workerName}</td>
+                        <td className="px-3 py-2 border border-slate-200"><span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-[9px] font-black">{p.workerType}</span></td>
+                        <td className="px-3 py-2 text-slate-500 border border-slate-200">{p.month}</td>
+                        <td className="px-3 py-2 tabular-nums border border-slate-200">{p.baseSalary.toLocaleString()} DA</td>
+                        <td className="px-3 py-2 tabular-nums text-orange-600 border border-slate-200">−{p.totalAcomptes.toLocaleString()}</td>
+                        <td className="px-3 py-2 tabular-nums text-red-600 border border-slate-200">−{p.totalAbsences.toLocaleString()}</td>
+                        <td className="px-3 py-2 tabular-nums text-green-600 border border-slate-200">+{p.bonusDecalage.toLocaleString()}</td>
+                        <td className="px-3 py-2 tabular-nums text-red-600 border border-slate-200">−{p.retenueDecalage.toLocaleString()}</td>
+                        <td className="px-3 py-2 tabular-nums font-black text-blue-900 border border-slate-200">{p.netSalary.toLocaleString()} DA</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-blue-900 text-white font-black">
+                      <td colSpan={8} className="px-3 py-2 text-[10px] uppercase border border-blue-800">TOTAL NET VERSÉ</td>
+                      <td className="px-3 py-2 tabular-nums border border-blue-800" style={{ color: C.gold }}>{reportData.totalWorkerPayments.toLocaleString()} DA</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* ─── SECTION 8: BILAN FINAL ─── */}
           <section id="section-bilan"
             className="rounded-3xl overflow-hidden shadow-2xl"
             style={{ background: `linear-gradient(135deg, ${C.blue900} 0%, ${C.blue800} 50%, ${C.blue600} 100%)` }}>
@@ -1093,28 +1097,21 @@ const DailyReport = () => {
         </motion.div>
       )}
 
+      {/* Body-level print portal — handlePrint clones the live report into this. */}
+      {ReactDOM.createPortal(
+        <div id="daily-report-print-area-portal" />,
+        document.body
+      )}
+
       <style>{`
+        #daily-report-print-area-portal { display: none; }
         @media print {
-          /* Isolate the report: hide everything visually, then reveal only the print section.
-             Using visibility (not display) keeps the report's own layout intact regardless
-             of how deeply it is nested inside the app shell. */
-          body * { visibility: hidden !important; }
-          .print-section, .print-section * { visibility: visible !important; }
-          .print-section {
-            position: absolute !important;
-            left: 0;
-            top: 0;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: visible !important;
-          }
-          /* Print-only blocks (hidden on screen) */
-          .print-only { display: block !important; }
-          * { box-shadow: none !important; }
-          @page { margin: 1cm; }
+          /* App-shell hide + portal reveal is handled globally (index.css,
+             body.print-document). Here we only fine-tune the cloned content. */
+          body.print-document #daily-report-print-area-portal .no-print { display: none !important; }
+          body.print-document #daily-report-print-area-portal .print-only { display: block !important; }
+          body.print-document #daily-report-print-area-portal * { box-shadow: none !important; overflow: visible !important; }
         }
-        h-13 { height: 3.25rem; }
       `}</style>
     </div>
   );

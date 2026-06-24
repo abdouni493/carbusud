@@ -7,8 +7,10 @@
 
 CREATE TABLE IF NOT EXISTS public.tpe_transactions (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  brigade_id      uuid REFERENCES public.brigades(id) ON DELETE CASCADE,
-  accounting_id   uuid REFERENCES public.brigade_accountings(id) ON DELETE CASCADE,
+  -- brigades.id is TEXT (uuid_generate_v4()::text), so this FK MUST be text.
+  brigade_id      text REFERENCES public.brigades(id) ON DELETE CASCADE,
+  -- The table is brigade_accounting (singular), not brigade_accountings.
+  accounting_id   uuid REFERENCES public.brigade_accounting(id) ON DELETE CASCADE,
   date            date NOT NULL DEFAULT CURRENT_DATE,
   mode            text NOT NULL CHECK (mode IN ('TAG', 'TPE')),
   client_name     text,

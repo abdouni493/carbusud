@@ -356,6 +356,8 @@ export const db = {
         product_units: settings.product_units ?? existing.product_units ?? ['Pièce', 'Litre', 'Kg', 'Carton', 'Pack', 'Bidon'],
         decalage_positif_actif: settings.decalage_positif_actif ?? existing.decalage_positif_actif ?? true,
         decalage_negatif_actif: settings.decalage_negatif_actif ?? existing.decalage_negatif_actif ?? true,
+        decalage_positif_seuil: settings.decalage_positif_seuil ?? existing.decalage_positif_seuil ?? 0,
+        decalage_negatif_seuil: settings.decalage_negatif_seuil ?? existing.decalage_negatif_seuil ?? 0,
       };
       return supabase.from('station_settings').update(mergedSettings).eq('id', existing.id);
     }

@@ -11,8 +11,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import { useAppState } from "../store/AppContext";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+import { exportElementToPdf } from "../lib/pdf";
 import * as XLSX from "xlsx";
 
 /* ── Colour palette ── */
@@ -292,13 +291,12 @@ const Reports = () => {
   /* ── Export ── */
   const generatePDF = async () => {
     if (!previewRef.current) return;
-    const canvas  = await html2canvas(previewRef.current, { scale: 2, backgroundColor: "#ffffff" });
-    const imgData = canvas.toDataURL("image/png");
-    const pdf     = new jsPDF("p", "mm", "a4");
-    const w = pdf.internal.pageSize.getWidth();
-    const h = (canvas.height * w) / canvas.width;
-    pdf.addImage(imgData, "PNG", 0, 0, w, h);
-    pdf.save(`Rapport_${activeCategory}_${startDate}_${endDate}.pdf`);
+    const ok = await exportElementToPdf(
+      previewRef.current,
+      `Rapport_${activeCategory}_${startDate}_${endDate}.pdf`,
+      { header: `Rapport ${activeCategory} — ${startDate} → ${endDate}` }
+    );
+    if (!ok) alert("Échec de la génération du PDF. Réessayez ou utilisez Imprimer → Enregistrer en PDF.");
   };
 
   const generateExcel = () => {

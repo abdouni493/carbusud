@@ -929,6 +929,22 @@ const Settings = () => {
                           }
                         </button>
                       </div>
+                      <div className="px-6 pb-5 pt-1">
+                        <label className="block text-[10px] font-black text-green-800 uppercase tracking-widest mb-2">
+                          Seuil d'alerte décalage positif (litres)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          className="input-field font-bold"
+                          value={form.decalagePositifSeuil ?? 0}
+                          onChange={e => setForm({ ...form, decalagePositifSeuil: parseFloat(e.target.value) || 0 })}
+                        />
+                        <p className="mt-2 text-[10px] text-slate-500 font-medium leading-relaxed">
+                          Ne pas afficher l'alerte si le décalage positif est inférieur à cette valeur
+                        </p>
+                      </div>
                       <div className={cn("px-6 py-3 text-[10px] font-black uppercase tracking-widest border-t", form.decalagePositifActif ? "bg-green-100 text-green-700 border-green-200" : "bg-slate-50 text-slate-400 border-green-100")}>
                         État : {form.decalagePositifActif ? "✓ ACTIVÉ" : "✗ Désactivé"}
                       </div>
@@ -952,6 +968,22 @@ const Settings = () => {
                             : <ToggleLeft className="w-12 h-12 text-slate-300" />
                           }
                         </button>
+                      </div>
+                      <div className="px-6 pb-5 pt-1">
+                        <label className="block text-[10px] font-black text-orange-800 uppercase tracking-widest mb-2">
+                          Seuil d'alerte décalage négatif (litres)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          className="input-field font-bold"
+                          value={form.decalageNegatifSeuil ?? 0}
+                          onChange={e => setForm({ ...form, decalageNegatifSeuil: parseFloat(e.target.value) || 0 })}
+                        />
+                        <p className="mt-2 text-[10px] text-slate-500 font-medium leading-relaxed">
+                          Ne pas afficher l'alerte si le décalage négatif est inférieur à cette valeur
+                        </p>
                       </div>
                       <div className={cn("px-6 py-3 text-[10px] font-black uppercase tracking-widest border-t", form.decalageNegatifActif ? "bg-orange-100 text-orange-700 border-orange-200" : "bg-slate-50 text-slate-400 border-orange-100")}>
                         État : {form.decalageNegatifActif ? "✓ ACTIVÉ" : "✗ Désactivé"}

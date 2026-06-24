@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   TrendingUp, Fuel, ShoppingCart, DollarSign, Activity, AlertTriangle,
   Clock, Package, Droplets, ArrowUpRight, ArrowDownRight,
-  Zap, Users, Calendar, Target
+  Zap, Users, Calendar, Target, ChevronDown, CheckCircle2
 } from "lucide-react";
 import { motion } from "motion/react";
 import { cn } from "@/src/lib/utils";
@@ -10,7 +10,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer
 } from "recharts";
-import { useAppState } from "../store/AppContext";
+import { useAppState, useAppDispatch } from "../store/AppContext";
 import { useNavigate } from "react-router-dom";
 import AlertsWidget, { useDismissedAlerts, useDashboardAlerts } from "../components/AlertsWidget";
 
@@ -226,8 +226,15 @@ const Dashboard = () => {
   const {
     tanks, products, brigades, clients, fuelSales, shopSales,
     pompistes, pumps, expenses, brigadeChefs, suppliers,
-    gerants, magasinWorkers, currentUserRole, currentUserId, settings, fuelInvoices
+    gerants, magasinWorkers, currentUserRole, currentUserId, settings, fuelInvoices,
+    brigadeDecalageAlerts = []
   } = useAppState();
+  const dispatch = useAppDispatch();
+  const [decAlertsOpen, setDecAlertsOpen] = useState(true);
+  const activeDecalageAlerts = useMemo(
+    () => brigadeDecalageAlerts.filter(a => !a.isDismissed && a.alertType !== 'CORRECT').slice(0, 20),
+    [brigadeDecalageAlerts]
+  );
 
   const isAdmin   = currentUserRole === 'admin';
   const isGerant  = currentUserRole === 'gerant';
@@ -359,6 +366,69 @@ const Dashboard = () => {
       </motion.div>
 
       <AlertsWidget alerts={dashboardAlerts} onDismiss={dismiss} />
+
+      {/* Alertes Décalage Brigades (admin) */}
+      {isAdmin && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+          <button onClick={() => setDecAlertsOpen(o => !o)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className={cn("w-5 h-5", activeDecalageAlerts.length > 0 ? "text-orange-500" : "text-green-500")} />
+              <h3 className="text-sm font-black uppercase tracking-wider text-blue-900">Alertes Décalage Brigades</h3>
+              {activeDecalageAlerts.length > 0 && (
+                <span className="px-2.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-black">{activeDecalageAlerts.length}</span>
+              )}
+            </div>
+            <ChevronDown className={cn("w-5 h-5 text-slate-400 transition-transform", decAlertsOpen ? "rotate-180" : "")} />
+          </button>
+
+          {decAlertsOpen && (
+            <div className="px-5 pb-5 space-y-3">
+              {activeDecalageAlerts.length === 0 ? (
+                <div className="flex items-center gap-2 p-4 rounded-xl bg-green-50 border border-green-200">
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  <p className="text-sm font-black text-green-700">✓ Aucune alerte de décalage</p>
+                </div>
+              ) : (
+                activeDecalageAlerts.map(a => {
+                  const isRetour = a.alertType === 'RETOUR_CUVE';
+                  const fmt = (iso?: string) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('fr-DZ', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+                  return (
+                    <div key={a.id} className={cn("p-4 rounded-xl border-2", isRetour ? "border-orange-200 bg-orange-50" : "border-red-200 bg-red-50")}>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={cn("text-[9px] font-black px-2 py-1 rounded-full uppercase", isRetour ? "bg-orange-200 text-orange-800" : "bg-red-200 text-red-800")}>{a.alertType}</span>
+                          <span className="text-[10px] font-bold text-slate-500">{fmt(a.startDatetime)} → {fmt(a.endDatetime)}</span>
+                        </div>
+                        <button onClick={() => dispatch({ type: 'DISMISS_BRIGADE_DECALAGE_ALERT', payload: a.id })} className="text-[10px] font-black uppercase px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 whitespace-nowrap">
+                          Marquer comme traité
+                        </button>
+                      </div>
+                      <p className={cn("text-[11px] font-bold mb-2", isRetour ? "text-orange-700" : "text-red-700")}>
+                        {isRetour
+                          ? "Des pistolets ont débité plus que la cuve — possible retour non enregistré"
+                          : "La cuve a diminué plus que les pistolets — possible vente directe"}
+                      </p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] font-bold text-slate-600">
+                        {a.chefName && <p>👨‍💼 Chef: <span className="text-slate-800">{a.chefName}</span></p>}
+                        {a.tankName && <p>🛢 Cuve: <span className="text-slate-800">{a.tankName}</span></p>}
+                        {a.pompisteName && <p>⛽ Pompiste: <span className="text-slate-800">{a.pompisteName}</span></p>}
+                        <p>📉 Décalage: <span className="text-slate-800">{a.decalageLiters.toLocaleString('fr-DZ', { maximumFractionDigits: 1 })} L / {a.decalageAmount.toLocaleString('fr-DZ', { maximumFractionDigits: 0 })} DZD</span></p>
+                      </div>
+                      {a.workersInfo && a.workersInfo.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {a.workersInfo.map((w, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[9px] font-bold text-slate-600">{w.name}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 pt-2">

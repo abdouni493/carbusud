@@ -214,6 +214,8 @@ export interface Brigade {
   endTimestamp?: string;
   startTime?: string;
   endTime?: string;
+  startDatetime?: string;   // ISO timestamp replacing separate date+startTime
+  endDatetime?: string;     // ISO timestamp replacing separate date+endTime
   isActive: boolean;
   notes?: string;
   printedAt?: string;
@@ -647,6 +649,28 @@ export interface StationSettings {
   productUnits?: string[];
   decalagePositifActif?: boolean;
   decalageNegatifActif?: boolean;
+  decalagePositifSeuil?: number;  // threshold below which positive décalage alert is suppressed
+  decalageNegatifSeuil?: number;  // threshold below which negative décalage alert is suppressed
+}
+
+export interface BrigadeDecalageAlert {
+  id: string;
+  brigadeId: string;
+  brigadeDate: string;
+  startDatetime?: string;
+  endDatetime?: string;
+  chefId?: string;
+  chefName?: string;
+  alertType: 'CORRECT' | 'RETOUR_CUVE' | 'VENTE_DIRECTE';
+  tankId?: string;
+  tankName?: string;
+  pompisteId?: string;
+  pompisteName?: string;
+  decalageLiters: number;
+  decalageAmount: number;
+  workersInfo: Array<{ id: string; name: string; role: string }>;
+  isDismissed: boolean;
+  createdAt: string;
 }
 
 export interface DailyReport {
@@ -669,6 +693,7 @@ export interface AppState {
   brigadeChefs: BrigadeChef[];
   brigades: Brigade[];
   brigadeAccountings: BrigadeAccounting[];
+  brigadeDecalageAlerts: BrigadeDecalageAlert[];
   tpeTransactions: TpeTransaction[];
   clients: Client[];
   suppliers: Supplier[];
@@ -714,6 +739,7 @@ const emptySettings: StationSettings = {
 
 const initialState: AppState = {
   tanks: [], pumps: [], pumpNozzles: [], tracks: [], pompistes: [], brigadeChefs: [], brigades: [], brigadeAccountings: [],
+  brigadeDecalageAlerts: [],
   tpeTransactions: [],
   clients: [], suppliers: [], products: [], expenses: [], deliveryNotes: [],
   fuelInvoices: [], fuelReceipts: [],
@@ -826,6 +852,9 @@ type AppAction =
   | { type: 'ADD_TPE_TRANSACTION'; payload: TpeTransaction }
   | { type: 'DELETE_TPE_TRANSACTION'; payload: string }
   | { type: 'SET_TPE_TRANSACTIONS'; payload: TpeTransaction[] }
+  | { type: 'ADD_BRIGADE_DECALAGE_ALERT'; payload: BrigadeDecalageAlert }
+  | { type: 'DISMISS_BRIGADE_DECALAGE_ALERT'; payload: string }
+  | { type: 'SET_BRIGADE_DECALAGE_ALERTS'; payload: BrigadeDecalageAlert[] }
   | { type: 'RESTORE_STATE'; payload: AppState };
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
@@ -1032,6 +1061,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_TPE_TRANSACTIONS':
       return { ...state, tpeTransactions: action.payload };
 
+    case 'ADD_BRIGADE_DECALAGE_ALERT':
+      return { ...state, brigadeDecalageAlerts: [action.payload, ...(state.brigadeDecalageAlerts || [])] };
+    case 'DISMISS_BRIGADE_DECALAGE_ALERT':
+      return { ...state, brigadeDecalageAlerts: (state.brigadeDecalageAlerts || []).map(a => a.id === action.payload ? { ...a, isDismissed: true } : a) };
+    case 'SET_BRIGADE_DECALAGE_ALERTS':
+      return { ...state, brigadeDecalageAlerts: action.payload };
+
     case 'MARK_PAYMENT_PAID': {
       const { workerType, workerId, paymentId } = action.payload;
       const upd = (rec: any[]) => rec.map(p => p.id === paymentId ? { ...p, isPaid: true } : p);
@@ -1095,7 +1131,7 @@ function mapMagasinWorker(r: any): MagasinWorker {
   return { id: r.id, name: r.name, phone: r.phone, email: r.email, cin: r.cin, address: r.address, photo: r.photo_url, photoUrl: r.photo_url, status: r.status, baseSalary: +r.base_salary, hasAccess: r.has_access, username: r.username, authUserId: r.auth_user_id ?? undefined, permissions: r.permissions || {}, hireDate: r.hire_date, paymentRecord: [], acomptes: [], absences: [] };
 }
 function mapBrigade(r: any): Brigade {
-  return { id: r.id, date: r.date, shift: r.shift, chefId: r.chef_id, status: r.status, startTimestamp: r.start_timestamp, endTimestamp: r.end_timestamp, startTime: r.start_time, endTime: r.end_time, isActive: r.is_active, notes: r.notes, printedAt: r.printed_at, pompisteIds: [], startIndices: r.start_indices || {}, endIndices: r.end_indices || {}, startTankLevels: r.start_tank_levels || {}, endTankLevels: r.end_tank_levels || {}, pompisteData: r.pompiste_data || {}, pompisteAssignments: r.pompiste_assignments || [], startNozzleIndices: r.start_nozzle_indices || {}, endNozzleIndices: r.end_nozzle_indices || {}, activeNozzleIds: r.active_nozzle_ids || [], canReactivate: r.can_reactivate ?? false };
+  return { id: r.id, date: r.date, shift: r.shift, chefId: r.chef_id, status: r.status, startTimestamp: r.start_timestamp, endTimestamp: r.end_timestamp, startTime: r.start_time, endTime: r.end_time, startDatetime: r.start_datetime, endDatetime: r.end_datetime, isActive: r.is_active, notes: r.notes, printedAt: r.printed_at, pompisteIds: [], startIndices: r.start_indices || {}, endIndices: r.end_indices || {}, startTankLevels: r.start_tank_levels || {}, endTankLevels: r.end_tank_levels || {}, pompisteData: r.pompiste_data || {}, pompisteAssignments: r.pompiste_assignments || [], startNozzleIndices: r.start_nozzle_indices || {}, endNozzleIndices: r.end_nozzle_indices || {}, activeNozzleIds: r.active_nozzle_ids || [], canReactivate: r.can_reactivate ?? false };
 }
 function mapBrigadeAccounting(r: any): BrigadeAccounting {
   return {
@@ -1105,6 +1141,18 @@ function mapBrigadeAccounting(r: any): BrigadeAccounting {
     nozzleVerifications: r.nozzle_verifications || {}, restAssignedWorkerType: r.rest_assigned_worker_type,
     restAssignedWorkerId: r.rest_assigned_worker_id, restAssignedAmount: +r.rest_assigned_amount || 0,
     status: r.status || 'draft', createdBy: r.created_by, justifications: [],
+  };
+}
+function mapBrigadeDecalageAlert(r: any): BrigadeDecalageAlert {
+  return {
+    id: r.id, brigadeId: r.brigade_id, brigadeDate: r.brigade_date,
+    startDatetime: r.start_datetime, endDatetime: r.end_datetime,
+    chefId: r.chef_id, chefName: r.chef_name,
+    alertType: r.alert_type, tankId: r.tank_id, tankName: r.tank_name,
+    pompisteId: r.pompiste_id, pompisteName: r.pompiste_name,
+    decalageLiters: +r.decalage_liters, decalageAmount: +r.decalage_amount,
+    workersInfo: r.workers_info || [], isDismissed: r.is_dismissed,
+    createdAt: r.created_at
   };
 }
 function mapTpeTransaction(r: any): TpeTransaction {
@@ -1166,7 +1214,7 @@ function mapNozzle(r: any): PumpNozzle {
   return { id: r.id, pumpId: r.pump_id, name: r.name, lastIndex: +r.last_index, startIndex: +r.start_index, status: r.status || 'Actif' };
 }
 function mapSettings(r: any): StationSettings {
-  return { name: r.name, logo: r.logo_url, logoUrl: r.logo_url, address: r.address, phone: r.phone, email: r.email, fiscalId: r.fiscal_id, rc: r.rc, fuelPrices: r.fuel_prices || emptySettings.fuelPrices, fuelBuyPrices: r.fuel_buy_prices || emptySettings.fuelBuyPrices, conversionTables: r.conversion_tables || {}, productCategories: r.product_categories || emptySettings.productCategories, expenseCategories: r.expense_categories || emptySettings.expenseCategories, productUnits: r.product_units || DEFAULT_PRODUCT_UNITS, decalagePositifActif: r.decalage_positif_actif, decalageNegatifActif: r.decalage_negatif_actif };
+  return { name: r.name, logo: r.logo_url, logoUrl: r.logo_url, address: r.address, phone: r.phone, email: r.email, fiscalId: r.fiscal_id, rc: r.rc, fuelPrices: r.fuel_prices || emptySettings.fuelPrices, fuelBuyPrices: r.fuel_buy_prices || emptySettings.fuelBuyPrices, conversionTables: r.conversion_tables || {}, productCategories: r.product_categories || emptySettings.productCategories, expenseCategories: r.expense_categories || emptySettings.expenseCategories, productUnits: r.product_units || DEFAULT_PRODUCT_UNITS, decalagePositifActif: r.decalage_positif_actif, decalageNegatifActif: r.decalage_negatif_actif, decalagePositifSeuil: +(r.decalage_positif_seuil ?? 0), decalageNegatifSeuil: +(r.decalage_negatif_seuil ?? 0) };
 }
 function mapAcompte(r: any): Acompte {
   return { id: r.id, date: r.date, amount: +r.amount, description: r.description, isPaid: r.is_paid, monthPaid: r.month_paid };
@@ -1264,18 +1312,35 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'DELETE_MAGASIN_WORKER': await db.deleteMagasinWorker(action.payload); break;
       case 'ADD_BRIGADE': {
         const b = action.payload;
-        await db.addBrigade({ id: b.id, date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {}, pompiste_assignments: b.pompisteAssignments || [], start_nozzle_indices: b.startNozzleIndices || {}, end_nozzle_indices: b.endNozzleIndices || {}, active_nozzle_ids: b.activeNozzleIds || [], can_reactivate: b.canReactivate ?? false });
+        await db.addBrigade({ id: b.id, date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, start_datetime: nz(b.startDatetime), end_datetime: nz(b.endDatetime), is_active: b.isActive, notes: b.notes, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {}, pompiste_assignments: b.pompisteAssignments || [], start_nozzle_indices: b.startNozzleIndices || {}, end_nozzle_indices: b.endNozzleIndices || {}, active_nozzle_ids: b.activeNozzleIds || [], can_reactivate: b.canReactivate ?? false });
         if (b.pompisteIds?.length) await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid })));
         break;
       }
       case 'UPDATE_BRIGADE': {
         const b = action.payload;
-        await db.updateBrigade(b.id, { date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, printed_at: b.printedAt, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {}, pompiste_assignments: b.pompisteAssignments || [], start_nozzle_indices: b.startNozzleIndices || {}, end_nozzle_indices: b.endNozzleIndices || {}, active_nozzle_ids: b.activeNozzleIds || [], can_reactivate: b.canReactivate ?? false });
+        await db.updateBrigade(b.id, { date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, start_datetime: nz(b.startDatetime), end_datetime: nz(b.endDatetime), is_active: b.isActive, notes: b.notes, printed_at: b.printedAt, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {}, pompiste_assignments: b.pompisteAssignments || [], start_nozzle_indices: b.startNozzleIndices || {}, end_nozzle_indices: b.endNozzleIndices || {}, active_nozzle_ids: b.activeNozzleIds || [], can_reactivate: b.canReactivate ?? false });
         if (b.pompisteIds) { await supabase.from('brigade_pompiste_assignments').delete().eq('brigade_id', b.id); if (b.pompisteIds.length) await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid }))); }
         break;
       }
       case 'DELETE_BRIGADE': await db.deleteBrigade(action.payload); break;
       case 'UPDATE_BRIGADE_STATUS': await db.updateBrigade(action.payload.brigadeId, { is_active: action.payload.isActive, status: action.payload.status }); break;
+      case 'ADD_BRIGADE_DECALAGE_ALERT': {
+        const al = action.payload;
+        await supabase.from('brigade_decalage_alerts').insert({
+          id: al.id, brigade_id: nz(al.brigadeId), brigade_date: al.brigadeDate,
+          start_datetime: nz(al.startDatetime), end_datetime: nz(al.endDatetime),
+          chef_id: nz(al.chefId), chef_name: al.chefName,
+          alert_type: al.alertType, tank_id: nz(al.tankId), tank_name: al.tankName,
+          pompiste_id: nz(al.pompisteId), pompiste_name: al.pompisteName,
+          decalage_liters: al.decalageLiters, decalage_amount: al.decalageAmount,
+          workers_info: al.workersInfo || [], is_dismissed: al.isDismissed,
+          created_at: al.createdAt,
+        });
+        break;
+      }
+      case 'DISMISS_BRIGADE_DECALAGE_ALERT':
+        await supabase.from('brigade_decalage_alerts').update({ is_dismissed: true }).eq('id', action.payload);
+        break;
       case 'ADD_BRIGADE_ACCOUNTING': {
         const a = action.payload;
         await db.addBrigadeAccounting({ id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
@@ -1571,7 +1636,7 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         await db.addDailyReport({ id: action.payload.id, date: action.payload.date, fuel_revenue: action.payload.fuelRevenue, shop_revenue: action.payload.shopRevenue, total_expenses: action.payload.totalExpenses, cash_to_deposit: action.payload.cashToDeposit, tank_variations: action.payload.tankVariations, brigade_ids: action.payload.brigadeIds });
         break;
       case 'SET_SETTINGS':
-        await db.saveSettings({ name: action.payload.name, logo_url: (action.payload as any).logoUrl || action.payload.logo, address: action.payload.address, phone: action.payload.phone, email: action.payload.email, fiscal_id: action.payload.fiscalId, rc: action.payload.rc, fuel_prices: action.payload.fuelPrices, fuel_buy_prices: action.payload.fuelBuyPrices || emptySettings.fuelBuyPrices, conversion_tables: action.payload.conversionTables, product_categories: action.payload.productCategories, expense_categories: action.payload.expenseCategories, product_units: action.payload.productUnits || DEFAULT_PRODUCT_UNITS, decalage_positif_actif: action.payload.decalagePositifActif, decalage_negatif_actif: action.payload.decalageNegatifActif });
+        await db.saveSettings({ name: action.payload.name, logo_url: (action.payload as any).logoUrl || action.payload.logo, address: action.payload.address, phone: action.payload.phone, email: action.payload.email, fiscal_id: action.payload.fiscalId, rc: action.payload.rc, fuel_prices: action.payload.fuelPrices, fuel_buy_prices: action.payload.fuelBuyPrices || emptySettings.fuelBuyPrices, conversion_tables: action.payload.conversionTables, product_categories: action.payload.productCategories, expense_categories: action.payload.expenseCategories, product_units: action.payload.productUnits || DEFAULT_PRODUCT_UNITS, decalage_positif_actif: action.payload.decalagePositifActif, decalage_negatif_actif: action.payload.decalageNegatifActif, decalage_positif_seuil: action.payload.decalagePositifSeuil ?? 0, decalage_negatif_seuil: action.payload.decalageNegatifSeuil ?? 0 });
         break;
       case 'UPDATE_WORKER_ACOMPTE':
         await db.addWorkerAcompte({ id: action.payload.acompte.id, worker_type: action.payload.workerType, worker_id: action.payload.workerId, date: action.payload.acompte.date, amount: action.payload.acompte.amount, description: action.payload.acompte.description, is_paid: action.payload.acompte.isPaid, month_paid: action.payload.acompte.monthPaid });
@@ -2222,6 +2287,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         });
         const tpeTransactions = (tpeRaw as any[]).map(mapTpeTransaction);
 
+        // Brigade décalage alerts (admin dashboard)
+        const alertsRaw = await safeQ('Brigade Décalage Alerts', async () => {
+          const { data, error } = await supabase.from('brigade_decalage_alerts').select('*').order('created_at', { ascending: false }).limit(200);
+          if (error) throw error; return data ?? [];
+        });
+        const brigadeDecalageAlerts = (alertsRaw as any[]).map(mapBrigadeDecalageAlert);
+
         if (cancelled) return;
 
         dispatch({
@@ -2231,6 +2303,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             fuelInvoices, fuelReceipts,
             expenses, inventories, dailyReports,
             tpeTransactions,
+            brigadeDecalageAlerts,
             pompistes:       pompistesWithPayroll,
             brigadeChefs:    brigadeChefWithPayroll,
             gerants:         gerantsWithPayroll,
@@ -2649,7 +2722,7 @@ export function useSupabaseDispatch() {
         // ── Brigades ───────────────────────────────────────────────────────
         case 'ADD_BRIGADE': {
           const b = action.payload;
-          await db.addBrigade({ id: b.id, date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {} });
+          await db.addBrigade({ id: b.id, date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, start_datetime: nz(b.startDatetime), end_datetime: nz(b.endDatetime), is_active: b.isActive, notes: b.notes, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {} });
           // Insert pompiste assignments
           if (b.pompisteIds?.length) {
             await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid })));
@@ -2658,7 +2731,7 @@ export function useSupabaseDispatch() {
         }
         case 'UPDATE_BRIGADE': {
           const b = action.payload;
-          await db.updateBrigade(b.id, { date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, is_active: b.isActive, notes: b.notes, printed_at: b.printedAt, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {} });
+          await db.updateBrigade(b.id, { date: b.date, shift: b.shift, chef_id: nz(b.chefId), status: b.status, start_timestamp: b.startTimestamp, end_timestamp: b.endTimestamp, start_time: b.startTime, end_time: b.endTime, start_datetime: nz(b.startDatetime), end_datetime: nz(b.endDatetime), is_active: b.isActive, notes: b.notes, printed_at: b.printedAt, start_indices: b.startIndices || {}, end_indices: b.endIndices || {}, start_tank_levels: b.startTankLevels || {}, end_tank_levels: b.endTankLevels || {}, pompiste_data: b.pompisteData || {} });
           // Sync pompiste assignments
           if (b.pompisteIds) {
             await supabase.from('brigade_pompiste_assignments').delete().eq('brigade_id', b.id);
@@ -2776,7 +2849,7 @@ export function useSupabaseDispatch() {
 
         // ── Settings ───────────────────────────────────────────────────────
         case 'SET_SETTINGS':
-          await db.saveSettings({ name: action.payload.name, logo_url: action.payload.logoUrl || action.payload.logo, address: action.payload.address, phone: action.payload.phone, email: action.payload.email, fiscal_id: action.payload.fiscalId, rc: action.payload.rc, fuel_prices: action.payload.fuelPrices, conversion_tables: action.payload.conversionTables, product_categories: action.payload.productCategories, expense_categories: action.payload.expenseCategories, product_units: action.payload.productUnits || DEFAULT_PRODUCT_UNITS, decalage_positif_actif: action.payload.decalagePositifActif, decalage_negatif_actif: action.payload.decalageNegatifActif });
+          await db.saveSettings({ name: action.payload.name, logo_url: action.payload.logoUrl || action.payload.logo, address: action.payload.address, phone: action.payload.phone, email: action.payload.email, fiscal_id: action.payload.fiscalId, rc: action.payload.rc, fuel_prices: action.payload.fuelPrices, conversion_tables: action.payload.conversionTables, product_categories: action.payload.productCategories, expense_categories: action.payload.expenseCategories, product_units: action.payload.productUnits || DEFAULT_PRODUCT_UNITS, decalage_positif_actif: action.payload.decalagePositifActif, decalage_negatif_actif: action.payload.decalageNegatifActif, decalage_positif_seuil: action.payload.decalagePositifSeuil ?? 0, decalage_negatif_seuil: action.payload.decalageNegatifSeuil ?? 0 });
           break;
 
         // ── Payroll sub-records ────────────────────────────────────────────
