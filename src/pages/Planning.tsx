@@ -915,8 +915,8 @@ const BrigadeDetailModal: React.FC<{
                           <p className="text-xs font-black text-green-700 mb-2 uppercase">{tank?.name || 'Cuve'}</p>
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <p className="text-xs text-green-600 font-bold">Degrés</p>
-                              <p className="text-2xl font-black text-green-900">{level.degrees}°</p>
+                              <p className="text-xs text-green-600 font-bold">{tank?.type === 'GPL' ? 'Pourcentage' : 'Degrés'}</p>
+                              <p className="text-2xl font-black text-green-900">{level.degrees}{tank?.type === 'GPL' ? '%' : '°'}</p>
                             </div>
                             <div>
                               <p className="text-xs text-green-600 font-bold">Litres</p>
@@ -1022,8 +1022,8 @@ const BrigadeDetailModal: React.FC<{
                           <p className="text-xs font-black text-orange-700 mb-2 uppercase">{tank?.name || 'Cuve'}</p>
                           <div className="grid grid-cols-2 gap-2 mb-2">
                             <div>
-                              <p className="text-xs text-orange-600 font-bold">Degrés</p>
-                              <p className="text-2xl font-black text-orange-900">{level.degrees}°</p>
+                              <p className="text-xs text-orange-600 font-bold">{tank?.type === 'GPL' ? 'Pourcentage' : 'Degrés'}</p>
+                              <p className="text-2xl font-black text-orange-900">{level.degrees}{tank?.type === 'GPL' ? '%' : '°'}</p>
                             </div>
                             <div>
                               <p className="text-xs text-orange-600 font-bold">Litres</p>

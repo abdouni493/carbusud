@@ -4,7 +4,7 @@ import {
   X, DollarSign, Droplets, Printer, CheckCircle, AlertTriangle,
   Search, Plus, Trash2, ChevronRight, ArrowRight, Users, Zap
 } from "lucide-react";
-import { cn, newId } from "@/src/lib/utils";
+import { cn, newId, degreesFromLiters } from "@/src/lib/utils";
 import {
   Brigade, Pump, Tank, Pompiste, BrigadeChef, PumpNozzle, StationSettings,
   Client, Track, BrigadeAccounting, BrigadeAccountingJustification, FuelType
@@ -316,11 +316,16 @@ const BrigadeAccountingModal: React.FC<Props> = ({
     });
 
     // Apply cuve corrections to brigade + tanks
-    tankComparison.forEach(({ tank, endL }) => {
+    tankComparison.forEach(({ tank }) => {
       const ver = cuveVer[tank.id];
       if (ver?.corrected && ver.correctedValue !== undefined) {
-        dispatch({ type: 'UPDATE_TANK', payload: { ...tank, current: ver.correctedValue } });
-        dispatch({ type: 'UPDATE_BRIGADE', payload: { ...brigade, endTankLevels: { ...(brigade.endTankLevels || {}), [tank.id]: { degrees: brigade.endTankLevels?.[tank.id]?.degrees || 0, liters: ver.correctedValue } } } });
+        const curve = settings.conversionTables?.[tank.id] || [];
+        const deg = tank.type === 'GPL'
+          ? (tank.capacity > 0 ? (ver.correctedValue / tank.capacity) * 100 : 0)
+          : (curve.length > 0 ? degreesFromLiters(curve, ver.correctedValue) : (brigade.endTankLevels?.[tank.id]?.degrees || 0));
+
+        dispatch({ type: 'UPDATE_TANK', payload: { ...tank, current: ver.correctedValue, degrees: deg } });
+        dispatch({ type: 'UPDATE_BRIGADE', payload: { ...brigade, endTankLevels: { ...(brigade.endTankLevels || {}), [tank.id]: { degrees: deg, liters: ver.correctedValue } } } });
       }
     });
 

@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ConfirmDialog from "../components/ConfirmDialog";
-import { cn, newId } from "@/src/lib/utils";
+import { cn, newId, degreesFromLiters } from "@/src/lib/utils";
 import { uploadFile, BUCKETS } from "../lib/supabase";
 import {
   useAppState, useAppDispatch, DeliveryNote, DeliveryNoteItem, FuelInvoice, FuelReceipt,
@@ -249,7 +249,28 @@ const BonsLivraisonTab = () => {
     items.forEach((i) => { if (!i.tankId) return; deltas[i.tankId] = (deltas[i.tankId] || 0) + sign * (i.liters || 0); });
     Object.entries(deltas).forEach(([tankId, delta]) => {
       const tank = tanks.find((t) => t.id === tankId);
-      if (tank) dispatch({ type: "UPDATE_TANK", payload: { ...tank, current: Math.max(0, tank.current + delta) } });
+      if (!tank) return;
+
+      // New absolute liters after delta
+      const newLiters = Math.max(0, (tank.current || 0) + delta);
+
+      // GPL tanks store a percentage in `degrees` (gauge %). For tanks
+      // with a conversion curve, `degrees` is the dipstick value and the
+      // UI derives litres from the curve; we must update `degrees` so the
+      // displayed level reflects the change.
+      const curve = (settings.conversionTables || {})[tank.id] || [];
+      if (tank.type === 'GPL') {
+        // For GPL compute percent = liters / capacity * 100
+        const percent = tank.capacity > 0 ? (newLiters / tank.capacity) * 100 : 0;
+        dispatch({ type: "UPDATE_TANK", payload: { ...tank, current: newLiters, degrees: Math.max(0, Math.min(100, percent)) } });
+      } else if (curve && curve.length > 0) {
+        // Convert liters -> degrees using inverse interpolation and store both
+        const deg = degreesFromLiters(curve, newLiters);
+        dispatch({ type: "UPDATE_TANK", payload: { ...tank, current: newLiters, degrees: deg } });
+      } else {
+        // Fallback: update litres directly
+        dispatch({ type: "UPDATE_TANK", payload: { ...tank, current: newLiters } });
+      }
     });
   };
 

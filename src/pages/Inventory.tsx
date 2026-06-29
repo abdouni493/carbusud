@@ -161,7 +161,9 @@ const FuelFormStep = ({ tanks, pumps, fuelData, pumpData, onFuelChange, onPumpCh
             {/* Input area */}
             <div className="p-5 grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pige (degrés °)</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  {tank.type === 'GPL' ? "Pige (pourcentage %)" : "Pige (degrés °)"}
+                </label>
                 <input type="number" step="0.01" placeholder="0.00"
                   className="w-full h-16 bg-slate-50 border-2 border-slate-100 rounded-2xl text-center text-2xl font-black text-blue-900 outline-none focus:border-blue-700 transition-all"
                   value={deg}
@@ -908,7 +910,7 @@ const Inventory = () => {
                         <div key={g.tankId} className="p-4 flex justify-between items-center">
                           <div>
                             <p className="font-black text-blue-900 text-sm uppercase">{t?.name ?? g.tankId}</p>
-                            {g.degrees != null && <p className="text-[10px] text-slate-400 font-bold">Pige: {g.degrees}°</p>}
+                            {g.degrees != null && <p className="text-[10px] text-slate-400 font-bold">Pige: {g.degrees}{t?.type === 'GPL' ? '%' : '°'}</p>}
                           </div>
                           <div className="text-right">
                             <p className="font-bold text-slate-400 text-sm">{g.systemQty.toLocaleString()} L → <span className="font-black text-blue-900">{g.actualQty.toLocaleString()} L</span></p>

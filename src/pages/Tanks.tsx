@@ -99,7 +99,7 @@ const TankCard = ({ tank, settings, onEdit, onDelete, onHistory, onConverter, on
         {/* Stats grid */}
         <div className="grid grid-cols-3 gap-2">
           {[
-            { label: "Degrés", value: `${tank.degrees}°` },
+            { label: tank.type === 'GPL' ? "Pourcentage" : "Degrés", value: `${tank.degrees}${tank.type === 'GPL' ? '%' : '°'}` },
             { label: "Alerte", value: `${tank.alertThreshold.toLocaleString()} L` },
             { label: "Disponible", value: `${available.toLocaleString()} L` },
           ].map((s, i) => (
@@ -239,9 +239,12 @@ const TankModal = ({ tank, onClose, onSave, settings }: any) => {
   const hasCurve = curve.length > 0;
 
   // Liters computed live from the degrees input.
-  const computedLiters = hasCurve
-    ? litersFromDegrees(curve, form.degrees)
-    : form.current;
+  const isGpl = form.type === 'GPL';
+  const computedLiters = isGpl
+    ? form.capacity * (form.degrees / 100)
+    : (hasCurve
+      ? litersFromDegrees(curve, form.degrees)
+      : form.current);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -294,14 +297,14 @@ const TankModal = ({ tank, onClose, onSave, settings }: any) => {
           {/* Degrees input + computed (or manual) liters */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="label-field">Hauteur / Degrés (cm)</label>
+              <label className="label-field">{isGpl ? "Pourcentage (%)" : "Hauteur / Degrés (cm)"}</label>
               <input type="number" className="input-field" value={form.degrees}
-                onChange={e => set("degrees", Number(e.target.value) || 0)} min={0} />
+                onChange={e => set("degrees", Number(e.target.value) || 0)} min={0} max={isGpl ? 100 : undefined} />
             </div>
-            {hasCurve ? (
+            {hasCurve || isGpl ? (
               <div>
                 <label className="label-field">Niveau Actuel (calculé)</label>
-                {/* Read-only highlighted value derived from the gauge curve */}
+                {/* Read-only highlighted value derived from the gauge curve or percentage */}
                 <div className="input-field bg-blue-50 border-blue-200 text-blue-900 font-black flex items-center gap-2 cursor-default select-none">
                   <Droplets className="w-4 h-4 text-blue-400 flex-shrink-0" />
                   {computedLiters.toLocaleString()} L
@@ -643,7 +646,8 @@ const Tanks = () => {
             tank={gplCalcTank}
             onClose={() => setGplCalcTank(null)}
             onApply={(liters: number) => {
-              dispatch({ type: 'UPDATE_TANK', payload: { ...gplCalcTank, current: liters } });
+              const pct = gplCalcTank.capacity > 0 ? (liters / gplCalcTank.capacity) * 100 : 0;
+              dispatch({ type: 'UPDATE_TANK', payload: { ...gplCalcTank, current: liters, degrees: pct } });
               dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: `Niveau de ${gplCalcTank.name} mis à jour: ${liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` } });
             }}
           />

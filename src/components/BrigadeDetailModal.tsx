@@ -6,7 +6,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import {
-  Brigade, Pump, Tank, Pompiste, BrigadeChef, PumpNozzle, Track, ShopSale, StationSettings, BrigadeAccounting, Client
+  useAppState, Brigade, Pump, Tank, Pompiste, BrigadeChef, PumpNozzle, Track, ShopSale, StationSettings, BrigadeAccounting, Client
 } from "../store/AppContext";
 
 interface Props {
@@ -21,6 +21,7 @@ interface Props {
   settings: StationSettings;
   accounting?: BrigadeAccounting;
   clients: Client[];
+  initialSection?: string;
   onClose: () => void;
 }
 
@@ -36,10 +37,109 @@ const SECTIONS = [
 
 const BrigadeDetailModal: React.FC<Props> = ({
   brigade, pumps, tanks, pompistes, brigadeChefs, pumpNozzles, tracks,
-  shopSales, settings, accounting, clients, onClose
+  shopSales, settings, accounting: initialAccounting, clients, initialSection, onClose
 }) => {
-  const [activeSection, setActiveSection] = useState('info');
+  const { brigadeAccountings } = useAppState();
+  const [activeSection, setActiveSection] = useState(initialSection || 'info');
   const chef = brigadeChefs.find(c => c.id === brigade.chefId);
+  const accounting = initialAccounting || brigadeAccountings.find(a => a.brigadeId === brigade.id);
+  const accountingRecord = useMemo<BrigadeAccounting | undefined>(() => {
+    if (accounting) return accounting;
+    if (brigade.status !== 'Clôturée') return undefined;
+
+    // Fallback computation
+    let totalTheoretical = 0;
+    let totalCash = 0;
+    const decalageSummary: Record<string, { money: number; liters: number }> = {};
+
+    if (brigade.pompisteData) {
+      Object.entries(brigade.pompisteData).forEach(([pompisteId, data]: [string, any]) => {
+        totalTheoretical += data.theoretical || 0;
+        totalCash += data.totalCollected || 0;
+        const ecartRestant = (data.theoretical || 0) - (data.totalCollected || 0);
+        if (Math.abs(ecartRestant) > 0.01) {
+          decalageSummary[pompisteId] = { money: ecartRestant, liters: 0 };
+        }
+      });
+    }
+
+    const startTankLevels = brigade.startTankLevels || {};
+    const endTankLevels = brigade.endTankLevels || {};
+    const startNozzleIndices = brigade.startNozzleIndices || {};
+    const endNozzleIndices = brigade.endNozzleIndices || {};
+
+    const tankSummary = tanks.filter(t => startTankLevels[t.id]).map(t => {
+      const startL = startTankLevels[t.id]?.liters || 0;
+      const endL = endTankLevels[t.id]?.liters || 0;
+      const tankPumps = pumps.filter(p => p.tankId === t.id);
+      const tankNozzles = pumpNozzles.filter(n => tankPumps.some(p => p.id === n.pumpId));
+      const nozzleDiff = tankNozzles.reduce((s, n) => s + Math.max(0, (endNozzleIndices[n.id] || 0) - (startNozzleIndices[n.id] || 0)), 0);
+      const cuveDiff = startL - endL;
+      const ecart = nozzleDiff - cuveDiff;
+      const price = settings.fuelPrices[t.type] || 0;
+      return {
+        tankId: t.id,
+        name: t.name,
+        start: startTankLevels[t.id],
+        end: endTankLevels[t.id],
+        diff: cuveDiff,
+        nozzleDiff,
+        ecart,
+        ecartMoney: Math.abs(ecart) * price,
+      };
+    });
+
+    const nozzleSummary = pumpNozzles.filter(n => startNozzleIndices[n.id] !== undefined).map(n => {
+      const pump = pumps.find(p => p.id === n.pumpId);
+      const startIdx = startNozzleIndices[n.id] || 0;
+      const endIdx = endNozzleIndices[n.id] || startIdx;
+      const liters = Math.max(0, endIdx - startIdx);
+      const price = settings.fuelPrices[pump?.type || 'DIESEL'] || 0;
+      return {
+        nozzleId: n.id,
+        start: startIdx,
+        end: endIdx,
+        startIdx,
+        endIdx,
+        liters,
+        revenue: liters * price,
+      };
+    });
+
+    const pompisteSummary: Record<string, any> = {};
+    if (brigade.pompisteData) {
+      Object.entries(brigade.pompisteData).forEach(([pompisteId, data]: [string, any]) => {
+        pompisteSummary[pompisteId] = {
+          theoretical: data.theoretical || 0,
+          cashReceived: data.totalCollected || 0,
+          justifTotal: 0,
+          ecart: (data.theoretical || 0) - (data.totalCollected || 0),
+          litersSold: data.litersSold || 0,
+          trackId: pompistes.find(p => p.id === pompisteId)?.trackId || '',
+          trackName: '',
+        };
+      });
+    }
+
+    const createdBy = brigade.notes?.startsWith('Créé par:') ? brigade.notes.replace('Créé par:', '').trim() : '';
+
+    return {
+      id: brigade.id,
+      brigadeId: brigade.id,
+      totalDue: totalTheoretical,
+      cashReceived: totalCash,
+      rest: totalTheoretical - totalCash,
+      tankSummary,
+      nozzleSummary,
+      pompisteSummary,
+      decalageSummary,
+      cuveVerifications: {},
+      nozzleVerifications: {},
+      status: 'completed',
+      createdBy,
+      justifications: [],
+    };
+  }, [accounting, brigadeAccountings, brigade, tanks, pumps, pumpNozzles, settings, pompistes]);
 
   // Active nozzles
   const activeNozzles = useMemo(() => {
@@ -177,7 +277,7 @@ const BrigadeDetailModal: React.FC<Props> = ({
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-blue-900 text-white">
-                        <tr>{['Cuve', 'Type', 'Début °', 'Début L', 'Fin °', 'Fin L', 'Diff L'].map(h => (
+                        <tr>{['Cuve', 'Type', 'Début °/%', 'Début L', 'Fin °/%', 'Fin L', 'Diff L'].map(h => (
                           <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
                         ))}</tr>
                       </thead>
@@ -186,9 +286,9 @@ const BrigadeDetailModal: React.FC<Props> = ({
                           <tr key={tank.id} className="hover:bg-blue-50/20">
                             <td className="px-3 py-3 font-black text-slate-800">{tank.name}</td>
                             <td className="px-3 py-3"><span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-100 text-blue-700">{tank.type}</span></td>
-                            <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{startDeg.toFixed(1)}°</td>
+                            <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{startDeg.toFixed(1)}{tank.type === 'GPL' ? '%' : '°'}</td>
                             <td className="px-3 py-3 font-black text-blue-700">{startL.toLocaleString('fr-FR')} L</td>
-                            <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{endDeg.toFixed(1)}°</td>
+                            <td className="px-3 py-3 font-mono text-[11px] text-slate-500">{endDeg.toFixed(1)}{tank.type === 'GPL' ? '%' : '°'}</td>
                             <td className="px-3 py-3 font-black text-slate-700">{endL.toLocaleString('fr-FR')} L</td>
                             <td className="px-3 py-3 font-black text-green-700">{(startL - endL).toFixed(1)} L</td>
                           </tr>
@@ -242,51 +342,58 @@ const BrigadeDetailModal: React.FC<Props> = ({
               {activeSection === 'pompistes' && (
                 <motion.div key="pompistes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-6 space-y-4">
                   <SectionHeader icon={Users} label="Pompistes de Brigade" />
-                  {(brigade.pompisteAssignments || []).length > 0 ? (
-                    <div className="space-y-3">
-                      {(brigade.pompisteAssignments || []).map(assignment => {
-                        const pompiste = pompistes.find(p => p.id === assignment.pompisteId);
-                        const track = tracks.find(t => t.id === assignment.trackId);
-                        const trackPumps = pumps.filter(p => p.trackId === assignment.trackId);
-                        const pompNozzles = nozzleData.filter(d => trackPumps.some(p => p.id === d.pump?.id));
-                        const liters = pompNozzles.reduce((s, d) => s + d.liters, 0);
-                        const revenue = pompNozzles.reduce((s, d) => s + d.revenue, 0);
-                        return (
-                          <div key={assignment.pompisteId} className={cn("p-4 rounded-2xl border-2", assignment.present ? "border-green-200 bg-white" : "border-red-200 bg-red-50/30 opacity-70")}>
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-black text-white", assignment.present ? "bg-blue-700" : "bg-red-400")}>
-                                {pompiste?.name[0] || '?'}
-                              </div>
-                              <div className="flex-1">
-                                <p className="font-black text-slate-800">{pompiste?.name || assignment.pompisteId}</p>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-[10px] text-slate-500">{track?.name || 'Piste inconnue'}</span>
-                                  {assignment.chefActingAsPompiste && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full">Chef/Pompiste</span>}
-                                  <span className={cn("px-1.5 py-0.5 text-[9px] font-black rounded-full", assignment.present ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>{assignment.present ? 'Présent' : 'Absent'}</span>
+                  {(() => {
+                    const assignments = (brigade.pompisteAssignments && brigade.pompisteAssignments.length > 0)
+                      ? brigade.pompisteAssignments
+                      : (brigade.pompisteIds || []).map(id => {
+                          const p = pompistes.find(x => x.id === id);
+                          return {
+                            pompisteId: id,
+                            trackId: p?.trackId || '',
+                            present: true,
+                            chefActingAsPompiste: false,
+                          };
+                        });
+                    if (assignments.length > 0) {
+                      return (
+                        <div className="space-y-3">
+                          {assignments.map(assignment => {
+                            const pompiste = pompistes.find(p => p.id === assignment.pompisteId);
+                            const trackId = assignment.trackId || pompiste?.trackId || '';
+                            const track = tracks.find(t => t.id === trackId);
+                            const trackPumps = pumps.filter(p => p.trackId === trackId);
+                            const pompNozzles = nozzleData.filter(d => trackPumps.some(p => p.id === d.pump?.id));
+                            const liters = pompNozzles.reduce((s, d) => s + d.liters, 0);
+                            const revenue = pompNozzles.reduce((s, d) => s + d.revenue, 0);
+                            return (
+                              <div key={assignment.pompisteId} className={cn("p-4 rounded-2xl border-2", assignment.present ? "border-green-200 bg-white" : "border-red-200 bg-red-50/30 opacity-70")}>
+                                <div className="flex items-center gap-3 mb-3">
+                                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-black text-white", assignment.present ? "bg-blue-700" : "bg-red-400")}>
+                                    {pompiste?.name[0] || '?'}
+                                  </div>
+                                  <div className="flex-1">
+                                    <p className="font-black text-slate-800">{pompiste?.name || assignment.pompisteId}</p>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                      <span className="text-[10px] text-slate-500">{track?.name || 'Piste inconnue'}</span>
+                                      {assignment.chefActingAsPompiste && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full">Chef/Pompiste</span>}
+                                      <span className={cn("px-1.5 py-0.5 text-[9px] font-black rounded-full", assignment.present ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>{assignment.present ? 'Présent' : 'Absent'}</span>
+                                    </div>
+                                  </div>
+                                  {assignment.present && (
+                                    <div className="text-right">
+                                      <p className="font-black text-blue-700">{liters.toFixed(2)} L</p>
+                                      <p className="font-black text-green-700 text-sm">{revenue.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</p>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
-                              {assignment.present && (
-                                <div className="text-right">
-                                  <p className="font-black text-blue-700">{liters.toFixed(2)} L</p>
-                                  <p className="font-black text-green-700 text-sm">{revenue.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    // Fallback for old brigades without pompisteAssignments
-                    <div className="space-y-3">
-                      {pompistes.filter(p => brigade.pompisteIds?.includes(p.id)).map(pompiste => (
-                        <div key={pompiste.id} className="p-4 bg-white rounded-2xl border border-slate-200 flex items-center gap-3">
-                          <div className="w-10 h-10 bg-blue-700 text-white rounded-xl flex items-center justify-center font-black">{pompiste.name[0]}</div>
-                          <div><p className="font-black text-slate-800">{pompiste.name}</p><p className="text-[10px] text-slate-500">{tracks.find(t => t.id === pompiste.trackId)?.name}</p></div>
+                            );
+                          })}
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    }
+                    return <Empty label="Aucun pompiste dans cette brigade" />;
+                  })()}
                 </motion.div>
               )}
 
@@ -294,7 +401,7 @@ const BrigadeDetailModal: React.FC<Props> = ({
               {activeSection === 'comptabilite' && (
                 <motion.div key="comptabilite" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-6 space-y-5">
                   <SectionHeader icon={DollarSign} label="Comptabilité" />
-                  {!accounting ? (
+                  {!accountingRecord ? (
                     <div className="text-center py-12">
                       <DollarSign className="w-12 h-12 text-slate-200 mx-auto mb-3" />
                       <p className="text-slate-400 font-medium">Aucune comptabilité enregistrée</p>
@@ -306,9 +413,9 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       {/* ① Synthèse financière */}
                       <div className="grid grid-cols-3 gap-4">
                         {[
-                          { label: 'Total Dû', value: `${accounting.totalDue.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: 'text-blue-700' },
-                          { label: 'Espèces Reçues', value: `${accounting.cashReceived.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: 'text-green-700' },
-                          { label: 'Reste', value: `${accounting.rest.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: Math.abs(accounting.rest) < 1 ? 'text-green-700' : 'text-red-700' },
+                          { label: 'Total Dû', value: `${accountingRecord.totalDue.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: 'text-blue-700' },
+                          { label: 'Espèces Reçues', value: `${accountingRecord.cashReceived.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: 'text-green-700' },
+                          { label: 'Reste', value: `${accountingRecord.rest.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD`, color: Math.abs(accountingRecord.rest) < 1 ? 'text-green-700' : 'text-red-700' },
                         ].map(({ label, value, color }) => (
                           <div key={label} className="bg-white rounded-2xl p-4 border border-slate-100 text-center">
                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">{label}</p>
@@ -317,17 +424,17 @@ const BrigadeDetailModal: React.FC<Props> = ({
                         ))}
                       </div>
                       <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                        <span className={cn("px-2 py-1 rounded-full text-[10px] font-black", accounting.status === 'completed' ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700")}>
-                          {accounting.status === 'completed' ? '✓ Comptabilisée' : 'En cours'}
+                        <span className={cn("px-2 py-1 rounded-full text-[10px] font-black", accountingRecord.status === 'completed' ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700")}>
+                          {accountingRecord.status === 'completed' ? '✓ Comptabilisée' : 'En cours'}
                         </span>
-                        {accounting.createdBy && <span className="text-[10px] text-slate-500 font-bold">par {accounting.createdBy}</span>}
+                        {accountingRecord.createdBy && <span className="text-[10px] text-slate-500 font-bold">par {accountingRecord.createdBy}</span>}
                       </div>
 
                       {/* ② Vérification des cuves */}
-                      {Object.keys(accounting.cuveVerifications || {}).length > 0 && (
+                      {Object.keys(accountingRecord.cuveVerifications || {}).length > 0 && (
                         <div className="space-y-2">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vérification Cuves</p>
-                          {(Object.entries(accounting.cuveVerifications) as [string, { verified: boolean; corrected: boolean; correctedValue?: number }][]).map(([tankId, ver]) => {
+                          {(Object.entries(accountingRecord.cuveVerifications) as [string, { verified: boolean; corrected: boolean; correctedValue?: number }][]).map(([tankId, ver]) => {
                             const tank = tanks.find(t => t.id === tankId);
                             return (
                               <div key={tankId} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100">
@@ -346,10 +453,10 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       )}
 
                       {/* ③ Vérification des pistolets */}
-                      {Object.keys(accounting.nozzleVerifications || {}).length > 0 && (
+                      {Object.keys(accountingRecord.nozzleVerifications || {}).length > 0 && (
                         <div className="space-y-2">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vérification Pistolets</p>
-                          {(Object.entries(accounting.nozzleVerifications) as [string, { verified: boolean; corrected: boolean; correctedValue?: number }][]).map(([nozzleId, ver]) => {
+                          {(Object.entries(accountingRecord.nozzleVerifications) as [string, { verified: boolean; corrected: boolean; correctedValue?: number }][]).map(([nozzleId, ver]) => {
                             const nozzle = pumpNozzles.find(n => n.id === nozzleId);
                             const pump = pumps.find(p => p.id === nozzle?.pumpId);
                             return (
@@ -372,7 +479,7 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       )}
 
                       {/* ④ Comparaison Cuves vs Pistolets */}
-                      {(accounting.tankSummary || []).length > 0 && (
+                      {(accountingRecord.tankSummary || []).length > 0 && (
                         <div className="space-y-2">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Comparaison Cuves / Pistolets</p>
                           <div className="overflow-x-auto">
@@ -383,7 +490,7 @@ const BrigadeDetailModal: React.FC<Props> = ({
                                 ))}</tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 bg-white">
-                                {(accounting.tankSummary as any[]).map((ts: any) => {
+                                {(accountingRecord.tankSummary as any[]).map((ts: any) => {
                                   const tank = tanks.find(t => t.id === ts.tankId);
                                   return (
                                     <tr key={ts.tankId} className={cn("hover:bg-slate-50", Math.abs(ts.ecart) < 2 ? "" : "bg-red-50/30")}>
@@ -401,11 +508,76 @@ const BrigadeDetailModal: React.FC<Props> = ({
                         </div>
                       )}
 
+                      {(accountingRecord.nozzleSummary || []).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Détails Pistolets</p>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-slate-900 text-white">
+                                <tr>{['Pistolet', 'Pompe', 'Début', 'Fin', 'Litres', 'Montant'].map(h => (
+                                  <th key={h} className="px-3 py-2 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
+                                ))}</tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {(accountingRecord.nozzleSummary as any[]).map((ns: any) => {
+                                  const nozzle = pumpNozzles.find(n => n.id === ns.nozzleId);
+                                  const pump = pumps.find(p => p.id === nozzle?.pumpId);
+                                  return (
+                                    <tr key={ns.nozzleId} className="hover:bg-slate-50">
+                                      <td className="px-3 py-2 font-black text-slate-800">{nozzle?.name || ns.nozzleId}</td>
+                                      <td className="px-3 py-2 text-slate-600">{pump?.name || '—'}</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{(ns.startIdx || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{(ns.endIdx || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                                      <td className="px-3 py-2 font-black text-blue-700">{(ns.liters || 0).toFixed(2)} L</td>
+                                      <td className="px-3 py-2 font-black text-green-700">{(ns.revenue || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ⑧ Résumé des Agents (Pompistes) */}
+                      {accountingRecord.pompisteSummary && Object.keys(accountingRecord.pompisteSummary).length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Détails Comptabilité Pompistes</p>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-blue-900 text-white">
+                                <tr>{['Pompiste', 'Piste', 'Théorique', 'Espèces', 'Justif.', 'Écart'].map(h => (
+                                  <th key={h} className="px-3 py-2 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
+                                ))}</tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {Object.entries(accountingRecord.pompisteSummary).map(([pompisteId, data]: [string, any]) => {
+                                  const pompiste = pompistes.find(p => p.id === pompisteId);
+                                  const track = tracks.find(t => t.id === data.trackId);
+                                  return (
+                                    <tr key={pompisteId} className="hover:bg-slate-50">
+                                      <td className="px-3 py-2 font-black text-slate-800">{pompiste?.name || pompisteId}</td>
+                                      <td className="px-3 py-2 text-slate-600">{track?.name || data.trackName || '—'}</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{(data.theoretical || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{(data.cashReceived || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</td>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{(data.justifTotal || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</td>
+                                      <td className={cn("px-3 py-2 font-black text-[11px]", (data.ecart || 0) < 0 ? "text-green-700" : (data.ecart || 0) > 0 ? "text-red-700" : "text-slate-600")}>
+                                        {(data.ecart || 0) > 0 ? '+' : ''}{(data.ecart || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
                       {/* ⑤ Décalage par agent */}
-                      {Object.keys(accounting.decalageSummary || {}).length > 0 && (
+                      {Object.keys(accountingRecord.decalageSummary || {}).length > 0 && (
                         <div className="space-y-2">
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Décalage par Agent</p>
-                          {Object.entries(accounting.decalageSummary).map(([workerId, d]: [string, any]) => {
+                          {Object.entries(accountingRecord.decalageSummary).map(([workerId, d]: [string, any]) => {
                             const pompiste = pompistes.find(p => p.id === workerId);
                             return (
                               <div key={workerId} className={cn("flex items-center gap-3 p-3 rounded-xl border", d.money < 0 ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100")}>
@@ -427,24 +599,24 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       )}
 
                       {/* ⑥ Reste affecté */}
-                      {accounting.restAssignedWorkerId && Math.abs(accounting.restAssignedAmount || 0) > 0.01 && (
+                      {accountingRecord.restAssignedWorkerId && Math.abs(accountingRecord.restAssignedAmount || 0) > 0.01 && (
                         <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
                           <p className="text-[10px] font-black text-amber-900 uppercase tracking-widest mb-2">Reste Affecté</p>
                           {(() => {
-                            const isChef = accounting.restAssignedWorkerType === 'chef_brigade';
+                            const isChef = accountingRecord.restAssignedWorkerType === 'chef_brigade';
                             const worker = isChef
-                              ? brigadeChefs.find(c => c.id === accounting.restAssignedWorkerId)
-                              : pompistes.find(p => p.id === accounting.restAssignedWorkerId);
+                              ? brigadeChefs.find(c => c.id === accountingRecord.restAssignedWorkerId)
+                              : pompistes.find(p => p.id === accountingRecord.restAssignedWorkerId);
                             return (
                               <div className="flex items-center justify-between">
                                 <div>
-                                  <p className="font-black text-slate-800">{worker?.name || accounting.restAssignedWorkerId}</p>
+                                  <p className="font-black text-slate-800">{worker?.name || accountingRecord.restAssignedWorkerId}</p>
                                   <span className="text-[9px] font-black px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full">{isChef ? 'Chef de Brigade' : 'Pompiste'}</span>
                                 </div>
                                 <div className="text-right">
-                                  <p className="font-black text-amber-800">{(accounting.restAssignedAmount || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</p>
-                                  <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full", (accounting.rest || 0) < 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
-                                    {(accounting.rest || 0) < 0 ? 'BONUS' : 'RETENUE'}
+                                  <p className="font-black text-amber-800">{(accountingRecord.restAssignedAmount || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</p>
+                                  <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full", (accountingRecord.rest || 0) < 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
+                                    {(accountingRecord.rest || 0) < 0 ? 'BONUS' : 'RETENUE'}
                                   </span>
                                 </div>
                               </div>
@@ -453,21 +625,28 @@ const BrigadeDetailModal: React.FC<Props> = ({
                         </div>
                       )}
 
-                      {/* ⑦ Justifications Clients */}
-                      {(accounting.justifications || []).length > 0 && (
+                      {/* ⑦ Justifications TAG / TPE / Clients */}
+                      {(accountingRecord.justifications || []).length > 0 && (
                         <div className="space-y-2">
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justifications Clients</p>
-                          {(accounting.justifications || []).map(j => {
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justifications TAG / TPE / Clients</p>
+                          {(accountingRecord.justifications || []).map(j => {
                             const client = clients.find(c => c.id === j.clientId);
+                            const track = tracks.find(t => t.id === j.trackId);
+                            const pompiste = pompistes.find(p => p.id === j.pompisteId);
+                            const label = j.clientName || client?.name || j.notes || j.justificationType || 'Justification';
                             return (
                               <div key={j.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-100">
                                 <div>
-                                  <span className="text-sm font-bold text-slate-700">{client?.name || j.clientId}</span>
-                                  {client && (
-                                    <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                                      {client.type} · {client.paymentMode}
-                                    </span>
-                                  )}
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-bold text-slate-700">{label}</span>
+                                    <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{j.justificationType || 'CLIENT'}</span>
+                                  </div>
+                                  <div className="text-[9px] text-slate-500 mt-1 space-x-2">
+                                    {j.fuelType && <span>{j.fuelType}</span>}
+                                    {track && <span>{track.name}</span>}
+                                    {pompiste && <span>{pompiste.name}</span>}
+                                    {j.liters ? <span>{j.liters.toLocaleString('fr-FR')} L</span> : null}
+                                  </div>
                                 </div>
                                 <span className="font-black text-blue-700">{j.amount.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} MAD</span>
                               </div>
@@ -529,7 +708,7 @@ const BrigadeDetailModal: React.FC<Props> = ({
                       brigade.startTimestamp && { time: brigade.startTimestamp, label: 'Brigade créée', color: 'bg-blue-500' },
                       brigade.status === 'Ouverte' && brigade.startTimestamp && { time: brigade.startTimestamp, label: 'Brigade activée', color: 'bg-green-500' },
                       brigade.endTimestamp && { time: brigade.endTimestamp, label: 'Brigade clôturée', color: 'bg-slate-500' },
-                      accounting && { time: brigade.endTimestamp || brigade.date, label: `Comptabilité enregistrée (${accounting.status})`, color: 'bg-emerald-500' },
+                      accountingRecord && { time: brigade.endTimestamp || brigade.date, label: `Comptabilité enregistrée (${accountingRecord.status})`, color: 'bg-emerald-500' },
                     ].filter(Boolean).map((ev: any, i) => (
                       <div key={i} className="flex items-start gap-3 p-3 bg-white rounded-xl border border-slate-100">
                         <div className={cn("w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0", ev.color)} />

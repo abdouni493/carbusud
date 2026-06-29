@@ -17,7 +17,7 @@ import {
   Edit2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { cn, newId } from "@/src/lib/utils";
+import { cn, newId, degreesFromLiters } from "@/src/lib/utils";
 import { useAppState, useAppDispatch, DeliveryNote, DeliveryNoteItem, Tank } from "../store/AppContext";
 import { uploadFile, BUCKETS } from "../lib/supabase";
 import EmptyState from "../components/EmptyState";
@@ -33,7 +33,7 @@ interface FormItem {
 const todayStr = () => new Date().toISOString().split("T")[0];
 
 const DeliveryNotes = () => {
-  const { deliveryNotes, suppliers, tanks } = useAppState();
+  const { deliveryNotes, suppliers, tanks, settings } = useAppState();
   const dispatch = useAppDispatch();
 
   const [showModal, setShowModal] = useState(false);
@@ -207,11 +207,17 @@ const DeliveryNotes = () => {
     });
     Object.entries(deltas).forEach(([tankId, delta]) => {
       const tank = tanks.find((t) => t.id === tankId);
-      if (tank) {
-        dispatch({
-          type: "UPDATE_TANK",
-          payload: { ...tank, current: Math.max(0, tank.current + delta) },
-        });
+      if (!tank) return;
+      const newLiters = Math.max(0, (tank.current || 0) + delta);
+      const curve = (settings.conversionTables || {})[tank.id] || [];
+      if (tank.type === 'GPL') {
+        const percent = tank.capacity > 0 ? (newLiters / tank.capacity) * 100 : 0;
+        dispatch({ type: 'UPDATE_TANK', payload: { ...tank, current: newLiters, degrees: Math.max(0, Math.min(100, percent)) } });
+      } else if (curve.length > 0) {
+        const deg = degreesFromLiters(curve, newLiters);
+        dispatch({ type: 'UPDATE_TANK', payload: { ...tank, current: newLiters, degrees: deg } });
+      } else {
+        dispatch({ type: 'UPDATE_TANK', payload: { ...tank, current: newLiters } });
       }
     });
   };

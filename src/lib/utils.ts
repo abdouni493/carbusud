@@ -49,6 +49,27 @@ export function litersFromDegrees(
 }
 
 /**
+ * Inverse of `litersFromDegrees` — converts litres to the corresponding
+ * degree value using linear interpolation on the same curve. Clamps to the
+ * curve endpoints when out of range. Returns the nearest degree for the
+ * given litres value.
+ */
+export function degreesFromLiters(
+  curve: { degree: number; liters: number }[],
+  liters: number
+): number {
+  if (!curve.length) return 0;
+  const sorted = [...curve].sort((a, b) => a.liters - b.liters);
+  if (liters <= sorted[0].liters) return sorted[0].degree;
+  if (liters >= sorted[sorted.length - 1].liters) return sorted[sorted.length - 1].degree;
+  const upper = sorted.find(r => r.liters >= liters)!;
+  const lower = [...sorted].reverse().find(r => r.liters <= liters)!;
+  if (upper.liters === lower.liters) return upper.degree;
+  const ratio = (liters - lower.liters) / (upper.liters - lower.liters);
+  return lower.degree + ratio * (upper.degree - lower.degree);
+}
+
+/**
  * Formate un montant en devises avec localisation
  * @param amount Montant à formater
  * @param currency Devise ('DA' pour Dinars Algériens)

@@ -290,6 +290,7 @@ export interface BrigadeAccounting {
   tankSummary: any[];
   nozzleSummary: any[];
   decalageSummary: Record<string, any>;
+  pompisteSummary?: Record<string, any>;
   cuveVerifications: Record<string, { verified: boolean; corrected: boolean; correctedValue?: number }>;
   nozzleVerifications: Record<string, { verified: boolean; corrected: boolean; correctedValue?: number }>;
   restAssignedWorkerType?: string;
@@ -955,7 +956,14 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'ADD_BRIGADE':    return { ...state, brigades: [...state.brigades, action.payload] };
     case 'UPDATE_BRIGADE': return { ...state, brigades: state.brigades.map(b => b.id === action.payload.id ? action.payload : b) };
-    case 'DELETE_BRIGADE': return { ...state, brigades: state.brigades.filter(b => b.id !== action.payload) };
+    case 'DELETE_BRIGADE':
+      return {
+        ...state,
+        brigades: state.brigades.filter(b => b.id !== action.payload),
+        brigadeDecalageAlerts: (state.brigadeDecalageAlerts || []).filter(a => a.brigadeId !== action.payload),
+        brigadeAccountings: (state.brigadeAccountings || []).filter(a => a.brigadeId !== action.payload),
+        fuelSales: (state.fuelSales || []).filter(s => s.brigadeId !== action.payload),
+      };
 
     case 'ADD_FUEL_SALE':    return { ...state, fuelSales: [...state.fuelSales, action.payload] };
     case 'UPDATE_FUEL_SALE': return { ...state, fuelSales: state.fuelSales.map(s => s.id === action.payload.id ? action.payload : s) };
@@ -1144,6 +1152,7 @@ function mapBrigadeAccounting(r: any): BrigadeAccounting {
     nozzleVerifications: r.nozzle_verifications || {}, restAssignedWorkerType: r.rest_assigned_worker_type,
     restAssignedWorkerId: r.rest_assigned_worker_id, restAssignedAmount: +r.rest_assigned_amount || 0,
     status: r.status || 'draft', createdBy: r.created_by, justifications: [],
+    pompisteSummary: r.pompiste_summary || {},
   };
 }
 function mapBrigadeDecalageAlert(r: any): BrigadeDecalageAlert {
@@ -1227,6 +1236,25 @@ function mapAbsence(r: any): Absence {
 }
 function mapPaymentRecord(r: any): WorkerPaymentRecord {
   return { id: r.id, month: r.month, baseSalary: +r.base_salary, totalAcomptes: +r.total_acomptes, totalAbsences: +r.total_absences, bonusDecalage: +(r.bonus_decalage ?? 0), retenueDecalage: +(r.retenue_decalage ?? 0), netSalary: +r.net_salary, paymentDate: r.payment_date, paymentMode: r.payment_mode, chequeNumber: r.cheque_number, notes: r.notes, isPaid: r.is_paid };
+}
+
+async function cleanBrigadeDependencies(brigadeId: string): Promise<void> {
+  // 1. Delete brigade_decalage_alerts for this brigade
+  await supabase.from('brigade_decalage_alerts').delete().eq('brigade_id', brigadeId);
+  // 2. Delete brigade_pompiste_assignments for this brigade
+  await supabase.from('brigade_pompiste_assignments').delete().eq('brigade_id', brigadeId);
+  // 3. Delete pompiste_decalage_history for this brigade
+  await supabase.from('pompiste_decalage_history').delete().eq('brigade_id', brigadeId);
+  // 4. Delete fuel_sales for this brigade
+  await supabase.from('fuel_sales').delete().eq('brigade_id', brigadeId);
+  // 5. Delete brigade_accounting_justifications associated with this brigade's accounting
+  const { data: accountings } = await supabase.from('brigade_accounting').select('id').eq('brigade_id', brigadeId);
+  if (accountings && accountings.length > 0) {
+    const accIds = accountings.map(a => a.id);
+    await supabase.from('brigade_accounting_justifications').delete().in('accounting_id', accIds);
+  }
+  // 6. Delete brigade_accounting rows
+  await supabase.from('brigade_accounting').delete().eq('brigade_id', brigadeId);
 }
 
 // ─── Supabase sync function (standalone, not a hook) ─────────────────────────
@@ -1325,11 +1353,15 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         if (b.pompisteIds) { await supabase.from('brigade_pompiste_assignments').delete().eq('brigade_id', b.id); if (b.pompisteIds.length) await supabase.from('brigade_pompiste_assignments').insert(b.pompisteIds.map(pid => ({ brigade_id: b.id, pompiste_id: pid }))); }
         break;
       }
-      case 'DELETE_BRIGADE': await db.deleteBrigade(action.payload); break;
+      case 'DELETE_BRIGADE':
+        await cleanBrigadeDependencies(action.payload);
+        await db.deleteBrigade(action.payload);
+        break;
       case 'UPDATE_BRIGADE_STATUS': await db.updateBrigade(action.payload.brigadeId, { is_active: action.payload.isActive, status: action.payload.status }); break;
       case 'ADD_BRIGADE_DECALAGE_ALERT': {
         const al = action.payload;
-        await supabase.from('brigade_decalage_alerts').insert({
+        // Use upsert with ignoreDuplicates to avoid 409 conflicts when the same alert is re-dispatched
+        await supabase.from('brigade_decalage_alerts').upsert({
           id: al.id, brigade_id: nz(al.brigadeId), brigade_date: al.brigadeDate,
           start_datetime: nz(al.startDatetime), end_datetime: nz(al.endDatetime),
           chef_id: nz(al.chefId), chef_name: al.chefName,
@@ -1338,7 +1370,7 @@ async function syncToSupabase(action: AppAction): Promise<void> {
           decalage_liters: al.decalageLiters, decalage_amount: al.decalageAmount,
           workers_info: al.workersInfo || [], is_dismissed: al.isDismissed,
           created_at: al.createdAt,
-        });
+        }, { onConflict: 'id', ignoreDuplicates: true });
         break;
       }
       case 'DISMISS_BRIGADE_DECALAGE_ALERT':
@@ -1349,7 +1381,19 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         break;
       case 'ADD_BRIGADE_ACCOUNTING': {
         const a = action.payload;
-        await db.addBrigadeAccounting({ id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
+        // Use upsert to handle FK race condition: brigade INSERT may not be committed
+        // yet when accounting INSERT fires. Upsert retries gracefully and also prevents
+        // duplicate-key errors on double-submission.
+        const accountingRow = { id: a.id, brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy, pompiste_summary: a.pompisteSummary || {} };
+        // Retry up to 3 times with exponential back-off to handle the brigade FK race
+        let lastErr: Error | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 300 * attempt));
+          const { error: accErr } = await supabase.from('brigade_accounting').upsert(accountingRow, { onConflict: 'id' });
+          if (!accErr) { lastErr = null; break; }
+          lastErr = new Error(`INSERT brigade_accounting: ${accErr.message}`);
+        }
+        if (lastErr) throw lastErr;
         if (a.justifications?.length) await Promise.all(a.justifications.map(j => {
           const isTPE = j.justificationType === 'TAG' || j.justificationType === 'TPE';
           return db.addBrigadeAccountingJustification({
@@ -1425,7 +1469,7 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       }
       case 'UPDATE_BRIGADE_ACCOUNTING': {
         const a = action.payload;
-        await db.updateBrigadeAccounting(a.id, { brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy });
+        await db.updateBrigadeAccounting(a.id, { brigade_id: a.brigadeId, total_due: a.totalDue, cash_received: a.cashReceived, rest: a.rest, tank_summary: a.tankSummary || [], nozzle_summary: a.nozzleSummary || [], decalage_summary: a.decalageSummary || {}, cuve_verifications: a.cuveVerifications || {}, nozzle_verifications: a.nozzleVerifications || {}, rest_assigned_worker_type: nz(a.restAssignedWorkerType), rest_assigned_worker_id: nz(a.restAssignedWorkerId), rest_assigned_amount: a.restAssignedAmount || 0, status: a.status, created_by: a.createdBy, pompiste_summary: a.pompisteSummary || {} });
         // Re-sync justifications for this accounting (delete old, then re-insert)
         await supabase.from('brigade_accounting_justifications').delete().eq('accounting_id', a.id);
         if (a.justifications?.length) await Promise.all(a.justifications.map(j => {
@@ -2748,6 +2792,7 @@ export function useSupabaseDispatch() {
           break;
         }
         case 'DELETE_BRIGADE':
+          await cleanBrigadeDependencies(action.payload);
           await db.deleteBrigade(action.payload);
           break;
         case 'UPDATE_BRIGADE_STATUS':

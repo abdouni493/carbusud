@@ -385,7 +385,7 @@ const DailyReport = () => {
     const allExpenseTotal = allExpenseRows.reduce((s, r) => s + (r.amount || 0), 0);
 
     /* E. Récapitulation */
-    const recapCash = brigadeCash + shopEspeces;
+    const recapCash = totalRevenue - allExpenseTotal;
 
     return {
       tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
@@ -755,8 +755,8 @@ const DailyReport = () => {
                           <div key={tb.brigadeId} className="flex items-center justify-between text-[10px] bg-slate-50 px-3 py-2 rounded-lg">
                             <span className="font-bold text-slate-600">{tb.date} • {tb.shift}</span>
                             <div className="flex gap-4">
-                              <span className="text-blue-800 font-black">Déb: {tb.startLit.toFixed(0)} L ({tb.startDeg}°)</span>
-                              <span className="text-blue-600 font-black">Fin: {tb.endLit.toFixed(0)} L ({tb.endDeg}°)</span>
+                              <span className="text-blue-800 font-black">Déb: {tb.startLit.toFixed(0)} L ({tb.startDeg}{tank.type === 'GPL' ? '%' : '°'})</span>
+                              <span className="text-blue-600 font-black">Fin: {tb.endLit.toFixed(0)} L ({tb.endDeg}{tank.type === 'GPL' ? '%' : '°'})</span>
                             </div>
                           </div>
                         ))}
@@ -1277,6 +1277,14 @@ const DailyReport = () => {
           { label: 'Crédit client', value: f.justifByType.CREDIT, color: '#ea580c' },
           { label: 'Avance client', value: f.justifByType.AVANCE, color: '#0d9488' },
         ].filter(j => Math.abs(j.value) > 0.001);
+        const decalageItems = f.decalageCases
+          .filter((d: any) => d.type === 'VENTE_DIRECTE' || d.type === 'RETOUR_CUVE')
+          .map((d: any, index: number) => ({
+            label: `${d.tankName || 'Piste'} ${d.type === 'VENTE_DIRECTE' ? '(Vente directe)' : `(Retour cuve: ${d.liters.toFixed(1)} L)`}`,
+            value: d.amount,
+            color: d.type === 'VENTE_DIRECTE' ? '#b91c1c' : '#c2410c',
+            id: `decalage-${index}`,
+          }));
         const venteTotale = f.fuelTotals.selling + f.shopTotals.selling;
         const beneficeNet = f.fuelTotals.gain + f.shopTotals.gain - f.allExpenseTotal;
 
@@ -1380,6 +1388,11 @@ const DailyReport = () => {
                   {justifItems.map(j => (
                     <span key={j.label} style={{ fontWeight: 800, fontSize: 10.5, padding: '5px 11px', borderRadius: 6, background: '#f8fafc', border: '1px solid #e2e8f0', color: j.color }}>
                       {j.label} : {da(j.value)} DA
+                    </span>
+                  ))}
+                  {decalageItems.length > 0 && decalageItems.map(j => (
+                    <span key={j.id} style={{ fontWeight: 800, fontSize: 10.5, padding: '5px 11px', borderRadius: 6, background: '#fee2e2', border: '1px solid #fecaca', color: j.color }}>
+                      Décalage {j.label} : {da(j.value)} DA
                     </span>
                   ))}
                 </div>

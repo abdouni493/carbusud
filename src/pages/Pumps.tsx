@@ -612,7 +612,7 @@ const Pumps = () => {
                                     </div>
                                     <div className="text-center p-2.5 bg-slate-50 rounded-xl">
                                       <p className="text-[9px] text-slate-400 font-bold uppercase mb-1">Jaugeage</p>
-                                      <p className="font-black text-slate-700 text-sm">{tank.degrees} °</p>
+                                      <p className="font-black text-slate-700 text-sm">{tank.degrees}{tank.type === 'GPL' ? '%' : ' °'}</p>
                                     </div>
                                     <div className="text-center p-2.5 bg-slate-50 rounded-xl">
                                       <p className="text-[9px] text-slate-400 font-bold uppercase mb-1">Seuil Alerte</p>

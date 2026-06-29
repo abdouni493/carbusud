@@ -33,7 +33,6 @@ import {
   CheckCircle,
   Trash2,
   LoaderCircle,
-  History,
   Search
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -60,7 +59,6 @@ const Brigades = () => {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [selectedBrigade, setSelectedBrigade] = useState<Brigade | null>(null);
   const [editingBrigade, setEditingBrigade] = useState<Brigade | null>(null);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [detailTab, setDetailTab] = useState<'info' | 'print'>('info');
   const [showActivateModal, setShowActivateModal] = useState(false);
   const [showDeactivateModal, setShowDeactivateModal] = useState(false);
@@ -497,7 +495,7 @@ const Brigades = () => {
         activeNozzleIds: pumpNozzles.filter(n => n.status === 'Actif').map(n => n.id),
         pompisteData,
         canReactivate: false,
-        notes: isEdit ? editingBrigade!.notes : (currentUserName ? `Créé par: ${currentUserName}` : undefined),
+        notes: currentUserName ? `Créé par: ${currentUserName}` : (isEdit ? editingBrigade!.notes : undefined),
       };
       dispatch({ type: isEdit ? 'UPDATE_BRIGADE' : 'ADD_BRIGADE', payload: newBrigade });
 
@@ -508,8 +506,58 @@ const Brigades = () => {
         totalDue: totalTheoretical,
         cashReceived: totalCash,
         rest: totalRest,
-        tankSummary: tanks.map(t => ({ tankId: t.id, name: t.name, start: startTankLevels[t.id], end: endTankLevelsObj[t.id] })),
-        nozzleSummary: pumpNozzles.filter(n => n.status === 'Actif').map(n => ({ nozzleId: n.id, start: startNozzleIndices[n.id], end: endNozzleIndices[n.id] })),
+        tankSummary: tanks.map(t => {
+          const startL = startTankLevels[t.id]?.liters || 0;
+          const endL = endTankLevelsObj[t.id]?.liters || 0;
+          const tankPumps = pumps.filter(p => p.tankId === t.id);
+          const tankNozzles = pumpNozzles.filter(n => n.status === 'Actif' && tankPumps.some(p => p.id === n.pumpId));
+          const nozzleDiff = tankNozzles.reduce((s, n) => s + Math.max(0, (endNozzleIndices[n.id] || 0) - (startNozzleIndices[n.id] || 0)), 0);
+          const cuveDiff = startL - endL;
+          const ecart = nozzleDiff - cuveDiff;
+          const price = settings.fuelPrices[t.type] || 0;
+          return {
+            tankId: t.id,
+            name: t.name,
+            start: startTankLevels[t.id],
+            end: endTankLevelsObj[t.id],
+            diff: cuveDiff,
+            nozzleDiff,
+            ecart,
+            ecartMoney: Math.abs(ecart) * price,
+          };
+        }),
+        nozzleSummary: pumpNozzles.filter(n => n.status === 'Actif').map(n => {
+          const pump = pumps.find(p => p.id === n.pumpId);
+          const startIdx = startNozzleIndices[n.id] || 0;
+          const endIdx = endNozzleIndices[n.id] || startIdx;
+          const liters = Math.max(0, endIdx - startIdx);
+          const price = settings.fuelPrices[pump?.type || 'DIESEL'] || 0;
+          return {
+            nozzleId: n.id,
+            start: startIdx,
+            end: endIdx,
+            startIdx,
+            endIdx,
+            liters,
+            revenue: liters * price,
+          };
+        }),
+        pompisteSummary: Object.fromEntries(
+          pompisteSales.map(s => {
+            const cash = pompistePayments[s.pompisteId] || 0;
+            const justifs = pompisteJustifications[s.pompisteId] || [];
+            const justifTotal = justifs.reduce((sum, j) => sum + (j.amount || 0), 0);
+            return [s.pompisteId, {
+              theoretical: s.theoretical,
+              cashReceived: cash,
+              justifTotal,
+              ecart: s.theoretical - cash - justifTotal,
+              litersSold: s.litersSold,
+              trackId: s.trackId,
+              trackName: s.trackName,
+            }];
+          })
+        ),
         decalageSummary,
         cuveVerifications: existingAccounting?.cuveVerifications || {},
         nozzleVerifications: existingAccounting?.nozzleVerifications || {},
@@ -517,7 +565,7 @@ const Brigades = () => {
         restAssignedWorkerType: existingAccounting?.restAssignedWorkerType,
         restAssignedWorkerId: existingAccounting?.restAssignedWorkerId,
         status: 'completed',
-        createdBy: existingAccounting?.createdBy || currentUserName,
+        createdBy: currentUserName || existingAccounting?.createdBy,
         justifications: accJustifications,
       };
       dispatch({ type: (isEdit && existingAccounting) ? 'UPDATE_BRIGADE_ACCOUNTING' : 'ADD_BRIGADE_ACCOUNTING', payload: accounting });
@@ -965,12 +1013,6 @@ const Brigades = () => {
                                 >
                                   <EyeIcon className="w-4 h-4" /> Voir Détails
                                 </button>
-                                <button
-                                  onClick={() => { setSelectedBrigade(b); setShowHistoryModal(true); setActionMenuOpen(null); }}
-                                  className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-                                >
-                                  <History className="w-4 h-4" /> Historique
-                                </button>
                                 {b.status === 'Clôturée' && (currentUserRole === 'admin' || currentUserRole === 'gerant') && (
                                   <button
                                     onClick={() => { setSelectedBrigade(b); setShowAccountingModal(true); setActionMenuOpen(null); }}
@@ -1172,13 +1214,6 @@ const Brigades = () => {
                                       className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
                                     >
                                       <EyeIcon className="w-4 h-4" /> Voir Détails
-                                    </button>
-
-                                    <button
-                                      onClick={() => { setSelectedBrigade(b); setShowHistoryModal(true); setActionMenuOpen(null); }}
-                                      className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-                                    >
-                                      <History className="w-4 h-4" /> Historique
                                     </button>
 
                                     <button
@@ -2250,180 +2285,6 @@ const Brigades = () => {
           );
         })()}
       </AnimatePresence>
-
-      {/* History Modal - Gérant View */}
-      <AnimatePresence>
-        {showHistoryModal && selectedBrigade && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowHistoryModal(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-4xl rounded-[2rem] relative z-10 overflow-hidden flex flex-col h-[90vh] shadow-2xl">
-              {/* Header */}
-              <div className="p-8 bg-gradient-to-r from-primary to-blue-600 text-white flex justify-between items-center shrink-0">
-                <div>
-                  <h3 className="font-black text-xs uppercase tracking-widest italic mb-1">Historique Brigade</h3>
-                  <p className="text-[10px] text-white/80">{selectedBrigade.date} • {selectedBrigade.shift}</p>
-                </div>
-                <button onClick={() => setShowHistoryModal(false)}><X className="w-7 h-7" /></button>
-              </div>
-
-              {/* Content */}
-              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-8">
-                {/* Brigade Info */}
-                <section className="space-y-4">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Informations Brigade</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="p-4 bg-slate-50 rounded-2xl">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Chef</p>
-                      <p className="text-sm font-black text-slate-700">{brigadeChefs.find(c => c.id === selectedBrigade.chefId)?.name}</p>
-                      <p className="text-[9px] text-slate-500 mt-2">{selectedBrigade.id}</p>
-                    </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Horaires</p>
-                      <p className="text-sm font-black text-slate-700">{selectedBrigade.startTime} - {selectedBrigade.endTime}</p>
-                      <p className="text-[9px] text-slate-500 mt-2">{selectedBrigade.shift}</p>
-                    </div>
-                    <div className="p-4 bg-slate-50 rounded-2xl">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Status</p>
-                      <span className={cn("px-3 py-1 rounded-full text-[9px] font-bold uppercase inline-block", selectedBrigade.status === "Ouverte" ? "bg-green-100 text-green-700" : selectedBrigade.status === "Planifiée" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-400")}>
-                        {selectedBrigade.status === "Ouverte" ? "En cours" : selectedBrigade.status}
-                      </span>
-                    </div>
-                  </div>
-                </section>
-
-                {/* Pompistes */}
-                <section className="space-y-4">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Agents ({selectedBrigade.pompisteIds?.length || 0})</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {pompistes.filter(p => selectedBrigade.pompisteIds?.includes(p.id)).map(p => (
-                      <div key={p.id} className="p-4 border border-slate-100 rounded-xl flex items-center gap-3">
-                        <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center font-bold text-primary">
-                          {p.name[0]}
-                        </div>
-                        <div>
-                          <p className="text-sm font-bold text-slate-700">{p.name}</p>
-                          <p className="text-[9px] text-slate-500">Piste: {p.trackId || 'N/A'}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                {/* Pistolets */}
-                {(() => {
-                  const hasNozzleData = Object.keys(selectedBrigade.startNozzleIndices || {}).length > 0;
-                  const brigadeNozzles = hasNozzleData
-                    ? pumpNozzles.filter(n => selectedBrigade.startNozzleIndices![n.id] !== undefined)
-                    : [];
-                  if (brigadeNozzles.length === 0) return null;
-                  return (
-                    <section className="space-y-4">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Index Pistolets</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {brigadeNozzles.map(n => {
-                          const pump = pumps.find(p => p.id === n.pumpId);
-                          const startIdx = selectedBrigade.startNozzleIndices![n.id];
-                          const endIdx = selectedBrigade.endNozzleIndices?.[n.id];
-                          const liters = endIdx !== undefined ? endIdx - startIdx : null;
-                          return (
-                            <div key={n.id} className="p-4 border border-slate-100 rounded-xl">
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className={cn("w-2 h-2 rounded-full flex-shrink-0", n.status === 'Actif' ? 'bg-green-400' : 'bg-slate-300')} />
-                                <p className="text-sm font-bold text-slate-700">{n.name}</p>
-                                {pump && <span className="text-[9px] text-slate-400 uppercase ml-auto">{pump.name} · {pump.type}</span>}
-                              </div>
-                              <div className="grid grid-cols-3 gap-2 text-[9px]">
-                                <div className="bg-blue-50 p-2 rounded">
-                                  <p className="text-slate-400 font-bold uppercase mb-1">Début</p>
-                                  <p className="font-black text-blue-600 tabular-nums">{startIdx.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</p>
-                                </div>
-                                <div className="bg-slate-50 p-2 rounded">
-                                  <p className="text-slate-400 font-bold uppercase mb-1">Fin</p>
-                                  <p className="font-black text-slate-700 tabular-nums">{endIdx !== undefined ? endIdx.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) : 'En cours'}</p>
-                                </div>
-                                <div className="bg-green-50 p-2 rounded">
-                                  <p className="text-slate-400 font-bold uppercase mb-1">Vendus</p>
-                                  <p className="font-black text-green-700 tabular-nums">{liters !== null ? `${liters.toFixed(2)} L` : '—'}</p>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  );
-                })()}
-
-                {/* Cuves */}
-                {tanks.length > 0 && (
-                  <section className="space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Cuves</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {tanks.filter(t => Object.keys(selectedBrigade.startTankLevels || {}).includes(t.id)).map(t => {
-                        const startLevel = selectedBrigade.startTankLevels?.[t.id];
-                        const endLevel = selectedBrigade.endTankLevels?.[t.id];
-                        return (
-                          <div key={t.id} className="p-4 border border-slate-100 rounded-xl">
-                            <p className="text-sm font-bold text-slate-700 mb-3">{t.name}</p>
-                            <div className="grid grid-cols-2 gap-3 text-[9px]">
-                              <div className="bg-blue-50 p-2 rounded">
-                                <p className="text-slate-400 font-bold uppercase mb-1">Début</p>
-                                <p className="font-black text-blue-600">{startLevel?.liters || 0} L</p>
-                              </div>
-                              <div className="bg-slate-50 p-2 rounded">
-                                <p className="text-slate-400 font-bold uppercase mb-1">Fin</p>
-                                <p className="font-black text-slate-700">{endLevel?.liters || 0} L</p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-
-                {/* Décalages */}
-                {selectedBrigade.pompisteData && (
-                  <section className="space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">Résumé Financier</h4>
-                    <div className="space-y-3">
-                      {Object.entries(selectedBrigade.pompisteData).map(([pompisteId, data]: [string, any]) => {
-                        const pompiste = pompistes.find(p => p.id === pompisteId);
-                        return (
-                          <div key={pompisteId} className="p-4 border-l-4 border-primary bg-slate-50 rounded-lg">
-                            <div className="flex items-start justify-between mb-2">
-                              <p className="font-bold text-slate-700">{pompiste?.name}</p>
-                              <span className={cn("text-sm font-black", data.decalage < 0 ? "text-red-600" : "text-green-600")}>
-                                {data.decalage.toLocaleString()} DZD
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-3 gap-2 text-[9px] text-slate-600">
-                              <div>Théorique: <span className="font-bold">{data.theoretical.toLocaleString()} DZD</span></div>
-                              <div>Collecté: <span className="font-bold">{data.totalCollected.toLocaleString()} DZD</span></div>
-                              <div>Litres: <span className="font-bold">{data.litersSold.toLocaleString()} L</span></div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div className="p-8 bg-slate-50 border-t flex gap-4 shrink-0 shadow-inner">
-                <button onClick={() => window.print()} className="flex-1 py-3 px-4 bg-slate-100 text-slate-700 rounded-lg font-bold text-[10px] uppercase hover:bg-slate-200 transition-colors flex items-center justify-center gap-2">
-                  <Printer className="w-4 h-4" /> Imprimer
-                </button>
-                <button onClick={() => setShowHistoryModal(false)} className="flex-1 py-3 px-4 bg-primary text-white rounded-lg font-bold text-[10px] uppercase hover:bg-primary/90 transition-colors">
-                  Fermer
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
 
       {/* Brigade Detail Modal — 5 Tabs */}
       <AnimatePresence>
