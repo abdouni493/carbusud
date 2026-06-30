@@ -19,7 +19,8 @@
       "PowerShell($g = Get-Command gh -ErrorAction SilentlyContinue; if \\($g\\) { $g.Source } else { \"gh not found\" })"
     ],
     "additionalDirectories": [
-      "C:\\Users\\Admin\\.claude"
+      "C:\\Users\\Admin\\.claude",
+      "c:\\Users\\Admin\\.claude\\projects\\c--Users-Admin-Desktop-station\\memory"
     ]
   }
 }
