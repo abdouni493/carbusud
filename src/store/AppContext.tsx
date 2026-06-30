@@ -1155,6 +1155,103 @@ function mapBrigadeAccounting(r: any): BrigadeAccounting {
     pompisteSummary: r.pompiste_summary || {},
   };
 }
+/** Load every brigade accounting with its justifications attached. Shared by the
+ *  initial hydration (Phase 2) and the realtime `brigades` refetch so both paths
+ *  always produce identical, complete accounting data (espèces reçues, TPE/Tags,
+ *  décalages par pompiste). Previously accountings were only loaded on realtime
+ *  events, so a freshly-loaded Fiche Journalière could miss this data. */
+async function loadBrigadeAccountingsWithJustifications(): Promise<BrigadeAccounting[]> {
+  const accountingsRaw = await db.getBrigadeAccountings().catch(() => []);
+  const accountings = ((accountingsRaw as any[]) || []).map(mapBrigadeAccounting);
+  if (accountings.length > 0) {
+    const { data: justifRaw } = await supabase.from('brigade_accounting_justifications').select('*');
+    ((justifRaw ?? []) as any[]).forEach((jr: any) => {
+      const acct = accountings.find(a => a.id === jr.accounting_id);
+      if (!acct) return;
+      if (!acct.justifications) acct.justifications = [];
+      acct.justifications.push({
+        id: jr.id, accountingId: jr.accounting_id, clientId: jr.client_id || '',
+        amount: +jr.amount || 0, clientType: jr.client_type, paymentMode: jr.payment_mode,
+        notes: jr.notes, justificationType: jr.justification_type || 'CLIENT',
+        clientName: jr.client_name, fuelType: jr.fuel_type, liters: +jr.liters || 0,
+        pricePerLiter: +jr.price_per_liter || 0, trackId: jr.track_id, pompisteId: jr.pompiste_id,
+      });
+    });
+  }
+  return accountings;
+}
+
+/* ── Worker loaders that re-merge payroll sub-records ─────────────────────────
+ * The realtime refetch slices below must rebuild workers WITH their acomptes,
+ * absences, salaires and décalages — otherwise a live event replaces the
+ * Phase-2-enriched workers with bare rows, silently dropping those sub-records
+ * (e.g. the Fiche Journalière "Dépenses" would lose acomptes & salaires). */
+async function loadPompistesEnriched(): Promise<Pompiste[]> {
+  const [rows, acomptes, absences, payments, decalage] = await Promise.all([
+    db.getPompistes(),
+    supabase.from('worker_acomptes').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []),
+    supabase.from('worker_absences').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []),
+    supabase.from('worker_payment_records').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []),
+    supabase.from('pompiste_decalage_history').select('*').then(r => r.data ?? []),
+  ]);
+  return (rows as any[]).map(p => {
+    const m = mapPompiste(p);
+    m.acomptes      = (acomptes as any[]).filter(a => a.worker_id === p.id).map(mapAcompte);
+    m.absences      = (absences as any[]).filter(a => a.worker_id === p.id).map(mapAbsence);
+    m.paymentRecord = (payments as any[]).filter(r => r.worker_id === p.id).map(mapPaymentRecord);
+    m.decalageHistory = (decalage as any[])
+      .filter(d => d.pompiste_id === p.id)
+      .map(d => ({ brigadeId: d.brigade_id, date: d.date, amount: +d.amount, type: d.type as 'BONUS' | 'RETENUE' }));
+    return m;
+  });
+}
+async function loadBrigadeChefsEnriched(): Promise<BrigadeChef[]> {
+  const [rows, assignments, acomptes, absences, payments] = await Promise.all([
+    db.getBrigadeChefs(),
+    supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []),
+    supabase.from('worker_acomptes').select('*').eq('worker_type', 'chef_brigade').then(r => r.data ?? []),
+    supabase.from('worker_absences').select('*').eq('worker_type', 'chef_brigade').then(r => r.data ?? []),
+    supabase.from('worker_payment_records').select('*').eq('worker_type', 'chef_brigade').then(r => r.data ?? []),
+  ]);
+  return (rows as any[]).map(c => {
+    const m = mapBrigadeChef(c);
+    m.pompisteIds   = (assignments as any[]).filter(a => a.chef_id === c.id).map(a => a.pompiste_id);
+    m.acomptes      = (acomptes as any[]).filter(a => a.worker_id === c.id).map(mapAcompte);
+    m.absences      = (absences as any[]).filter(a => a.worker_id === c.id).map(mapAbsence);
+    m.paymentRecord = (payments as any[]).filter(r => r.worker_id === c.id).map(mapPaymentRecord);
+    return m;
+  });
+}
+async function loadGerantsEnriched(): Promise<GerantWorker[]> {
+  const [rows, acomptes, absences, payments] = await Promise.all([
+    db.getGerants(),
+    supabase.from('worker_acomptes').select('*').eq('worker_type', 'gerant').then(r => r.data ?? []),
+    supabase.from('worker_absences').select('*').eq('worker_type', 'gerant').then(r => r.data ?? []),
+    supabase.from('worker_payment_records').select('*').eq('worker_type', 'gerant').then(r => r.data ?? []),
+  ]);
+  return (rows as any[]).map(g => {
+    const m = mapGerant(g);
+    m.acomptes      = (acomptes as any[]).filter(a => a.worker_id === g.id).map(mapAcompte);
+    m.absences      = (absences as any[]).filter(a => a.worker_id === g.id).map(mapAbsence);
+    m.paymentRecord = (payments as any[]).filter(r => r.worker_id === g.id).map(mapPaymentRecord);
+    return m;
+  });
+}
+async function loadMagasinWorkersEnriched(): Promise<MagasinWorker[]> {
+  const [rows, acomptes, absences, payments] = await Promise.all([
+    db.getMagasinWorkers(),
+    supabase.from('worker_acomptes').select('*').eq('worker_type', 'magasin').then(r => r.data ?? []),
+    supabase.from('worker_absences').select('*').eq('worker_type', 'magasin').then(r => r.data ?? []),
+    supabase.from('worker_payment_records').select('*').eq('worker_type', 'magasin').then(r => r.data ?? []),
+  ]);
+  return (rows as any[]).map(w => {
+    const m = mapMagasinWorker(w);
+    m.acomptes      = (acomptes as any[]).filter(a => a.worker_id === w.id).map(mapAcompte);
+    m.absences      = (absences as any[]).filter(a => a.worker_id === w.id).map(mapAbsence);
+    m.paymentRecord = (payments as any[]).filter(r => r.worker_id === w.id).map(mapPaymentRecord);
+    return m;
+  });
+}
 function mapBrigadeDecalageAlert(r: any): BrigadeDecalageAlert {
   return {
     id: r.id, brigadeId: r.brigade_id, brigadeDate: r.brigade_date,
@@ -2344,6 +2441,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         });
         const brigadeDecalageAlerts = (alertsRaw as any[]).map(mapBrigadeDecalageAlert);
 
+        // Brigade accountings (+ justifications) — required by the Fiche Journalière
+        // (espèces reçues, TPE/Tags, décalages par pompiste) and the dashboards.
+        const brigadeAccountings = await safeQ('Brigade Accountings', loadBrigadeAccountingsWithJustifications);
+
         if (cancelled) return;
 
         dispatch({
@@ -2354,6 +2455,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             expenses, inventories, dailyReports,
             tpeTransactions,
             brigadeDecalageAlerts,
+            brigadeAccountings,
             pompistes:       pompistesWithPayroll,
             brigadeChefs:    brigadeChefWithPayroll,
             gerants:         gerantsWithPayroll,
@@ -2401,47 +2503,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       tracks:  async () => ({ tracks:          ((await db.getTracks())       as any[]).map(mapTrack) }),
       products: async () => ({ products:       ((await db.getProducts())     as any[]).map(mapProduct) }),
       product_brands: async () => ({ productBrands: ((await db.getBrands()) as any[]).map(mapBrand) }),
-      pompistes: async () => ({ pompistes:     ((await db.getPompistes())    as any[]).map(mapPompiste) }),
-      brigade_chefs: async () => ({ brigadeChefs: ((await db.getBrigadeChefs()) as any[]).map(mapBrigadeChef) }),
-      gerants: async () => ({ gerants:         ((await db.getGerants())      as any[]).map(mapGerant) }),
-      magasin_workers: async () => ({ magasinWorkers: ((await db.getMagasinWorkers()) as any[]).map(mapMagasinWorker) }),
+      pompistes: async () => ({ pompistes:     await loadPompistesEnriched() }),
+      brigade_chefs: async () => ({ brigadeChefs: await loadBrigadeChefsEnriched() }),
+      gerants: async () => ({ gerants:         await loadGerantsEnriched() }),
+      magasin_workers: async () => ({ magasinWorkers: await loadMagasinWorkersEnriched() }),
       suppliers: async () => ({ suppliers:     ((await db.getSuppliers())    as any[]).map(mapSupplier) }),
       clients:  async () => ({ clients:        ((await db.getClients())      as any[]).map(mapClient) }),
       expenses: async () => ({ expenses:       ((await db.getExpenses())     as any[]).map(mapExpense) }),
       brigades: async () => {
         const raw       = await db.getBrigades();
         const assignRaw = await supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []);
-        const accountingsRaw = await db.getBrigadeAccountings().catch(() => []);
-        const brigadeAccountings = ((accountingsRaw as any[]) || []).map(mapBrigadeAccounting);
-
-        // Load justifications for all accountings in one query and attach to their accounting
-        if (brigadeAccountings.length > 0) {
-          const { data: justifRaw } = await supabase
-            .from('brigade_accounting_justifications')
-            .select('*');
-          ((justifRaw ?? []) as any[]).forEach((jr: any) => {
-            const acct = brigadeAccountings.find(a => a.id === jr.accounting_id);
-            if (!acct) return;
-            if (!acct.justifications) acct.justifications = [];
-            acct.justifications.push({
-              id: jr.id,
-              accountingId: jr.accounting_id,
-              clientId: jr.client_id || '',
-              amount: +jr.amount || 0,
-              clientType: jr.client_type,
-              paymentMode: jr.payment_mode,
-              notes: jr.notes,
-              justificationType: jr.justification_type || 'CLIENT',
-              clientName: jr.client_name,
-              fuelType: jr.fuel_type,
-              liters: +jr.liters || 0,
-              pricePerLiter: +jr.price_per_liter || 0,
-              trackId: jr.track_id,
-              pompisteId: jr.pompiste_id,
-            });
-          });
-        }
-
+        const brigadeAccountings = await loadBrigadeAccountingsWithJustifications();
         return { brigades: (raw as any[]).map(b => { const m = mapBrigade(b); m.pompisteIds = (assignRaw as any[]).filter(a => a.brigade_id === b.id).map(a => a.pompiste_id); return m; }), brigadeAccountings };
       },
       fuel_sales: async () => {

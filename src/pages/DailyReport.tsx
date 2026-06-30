@@ -351,10 +351,21 @@ const DailyReport = () => {
       (acc.justifications || []).forEach((j: any) => { if (j.justificationType === 'TPE') tpeCaisseToEnd += j.amount || 0; });
     });
 
-    /* Décalage cases (comparison-step alerts) for brigades in the period */
-    const decalageCases = (brigadeDecalageAlerts || [])
-      .filter(a => { const d = new Date(a.brigadeDate); return d >= start && d <= end; })
-      .map(a => ({ type: a.alertType, tankName: a.tankName || '—', chefName: a.chefName || '—', liters: a.decalageLiters, amount: a.decalageAmount, date: a.brigadeDate }));
+    /* Décalages par pompiste — agrège le decalageSummary (litres + montant) de
+       chaque pompiste sur la période, puis ne retient QUE les totaux négatifs
+       (manques). Remplace l'ancien affichage des décalages (étape comparaison). */
+    const pompisteDecalageMap: Record<string, { liters: number; money: number }> = {};
+    brigadeDetails.forEach((b: any) => {
+      Object.entries(b.decalageSummary || {}).forEach(([pid, d]: [string, any]) => {
+        if (!pompisteDecalageMap[pid]) pompisteDecalageMap[pid] = { liters: 0, money: 0 };
+        pompisteDecalageMap[pid].liters += d?.liters || 0;
+        pompisteDecalageMap[pid].money  += d?.money  || 0;
+      });
+    });
+    const pompisteDecalages = Object.entries(pompisteDecalageMap)
+      .map(([pid, d]) => ({ pompisteName: pompistes.find(p => p.id === pid)?.name || '—', liters: d.liters, money: d.money }))
+      .filter(d => d.money < -0.01)
+      .sort((a, b) => a.money - b.money);
 
     /* C. Magasin — products sold (qty, money @ buy / @ sell, gains) */
     const shopByProduct: Record<string, { qty: number; selling: number; buy: number }> = {};
@@ -384,8 +395,12 @@ const DailyReport = () => {
     const allExpenseRows = [...expenseRows, ...acompteRows, ...salaryRows];
     const allExpenseTotal = allExpenseRows.reduce((s, r) => s + (r.amount || 0), 0);
 
-    /* E. Récapitulation */
-    const recapCash = totalRevenue - allExpenseTotal;
+    /* E. Récapitulation — « Espèces (toutes ventes) » calculé exactement comme
+       décrit sur la fiche : espèces reçues carburant + total vente magasin,
+       moins (vente magasin + vente carburant), moins le total des dépenses. */
+    const recapCash = brigadeCash + shopTotals.selling
+      - (shopTotals.selling + fuelTotals.selling)
+      - allExpenseTotal;
 
     return {
       tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
@@ -397,7 +412,7 @@ const DailyReport = () => {
       // Fiche journalière (clean template)
       fiche: {
         fuelRows, fuelTotals, brigadeCash,
-        justifByType, tagGroups, tpeCaisseToEnd, decalageCases,
+        justifByType, tagGroups, tpeCaisseToEnd, pompisteDecalages,
         shopRows, shopTotals,
         allExpenseRows, allExpenseTotal,
         recapCash,
@@ -1277,14 +1292,6 @@ const DailyReport = () => {
           { label: 'Crédit client', value: f.justifByType.CREDIT, color: '#ea580c' },
           { label: 'Avance client', value: f.justifByType.AVANCE, color: '#0d9488' },
         ].filter(j => Math.abs(j.value) > 0.001);
-        const decalageItems = f.decalageCases
-          .filter((d: any) => d.type === 'VENTE_DIRECTE' || d.type === 'RETOUR_CUVE')
-          .map((d: any, index: number) => ({
-            label: `${d.tankName || 'Piste'} ${d.type === 'VENTE_DIRECTE' ? '(Vente directe)' : `(Retour cuve: ${d.liters.toFixed(1)} L)`}`,
-            value: d.amount,
-            color: d.type === 'VENTE_DIRECTE' ? '#b91c1c' : '#c2410c',
-            id: `decalage-${index}`,
-          }));
         const venteTotale = f.fuelTotals.selling + f.shopTotals.selling;
         const beneficeNet = f.fuelTotals.gain + f.shopTotals.gain - f.allExpenseTotal;
 
@@ -1390,30 +1397,22 @@ const DailyReport = () => {
                       {j.label} : {da(j.value)} DA
                     </span>
                   ))}
-                  {decalageItems.length > 0 && decalageItems.map(j => (
-                    <span key={j.id} style={{ fontWeight: 800, fontSize: 10.5, padding: '5px 11px', borderRadius: 6, background: '#fee2e2', border: '1px solid #fecaca', color: j.color }}>
-                      Décalage {j.label} : {da(j.value)} DA
-                    </span>
-                  ))}
                 </div>
 
-                {/* décalage cases */}
-                {f.decalageCases.length > 0 && (
+                {/* Décalages par pompiste — uniquement les totaux négatifs (manques) */}
+                {f.pompisteDecalages.length > 0 && (
                   <div style={{ marginTop: 8 }}>
-                    <p style={subLabel}>Décalages remarqués (étape comparaison)</p>
+                    <p style={subLabel}>Décalages pompistes (manques)</p>
                     <table style={tableStyle}>
                       <thead><tr style={theadRow}>
-                        <TH>Type</TH><TH>Cuve</TH><TH>Chef</TH><TH align="right">Écart (L)</TH><TH align="right">Montant</TH><TH align="right">Date</TH>
+                        <TH>Pompiste</TH><TH align="right">Écart (L)</TH><TH align="right">Montant</TH>
                       </tr></thead>
                       <tbody>
-                        {f.decalageCases.map((d, i) => (
+                        {f.pompisteDecalages.map((d, i) => (
                           <tr key={i} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
-                            <TD bold color={d.type === 'RETOUR_CUVE' ? '#c2410c' : '#b91c1c'}>{d.type === 'RETOUR_CUVE' ? 'Retour cuve' : 'Vente directe'}</TD>
-                            <TD>{d.tankName}</TD>
-                            <TD>{d.chefName}</TD>
-                            <TD align="right">{lit(d.liters)}</TD>
-                            <TD align="right" bold>{da(d.amount)} DA</TD>
-                            <TD align="right">{d.date}</TD>
+                            <TD bold color="#b91c1c">{d.pompisteName}</TD>
+                            <TD align="right">{lit(d.liters)} L</TD>
+                            <TD align="right" bold color="#dc2626">{da(d.money)} DA</TD>
                           </tr>
                         ))}
                       </tbody>
