@@ -364,7 +364,7 @@ const DailyReport = () => {
     });
     const pompisteDecalages = Object.entries(pompisteDecalageMap)
       .map(([pid, d]) => ({ pompisteName: pompistes.find(p => p.id === pid)?.name || '—', liters: d.liters, money: d.money }))
-      .filter(d => d.money < -0.01)
+      .filter(d => Math.abs(d.money) > 0.01 || Math.abs(d.liters) > 0.01)
       .sort((a, b) => a.money - b.money);
 
     /* C. Magasin — products sold (qty, money @ buy / @ sell, gains) */
@@ -395,9 +395,51 @@ const DailyReport = () => {
     const allExpenseRows = [...expenseRows, ...acompteRows, ...salaryRows];
     const allExpenseTotal = allExpenseRows.reduce((s, r) => s + (r.amount || 0), 0);
 
-    /* E. Récapitulation — « Espèces (toutes ventes) » d'après les valeurs
-       affichées sur la fiche : Vente Carburant + Vente Magasin − Total Dépenses. */
-    const recapCash = fuelTotals.selling + shopTotals.selling - allExpenseTotal;
+    /* E. Récapitulation — « Espèces (toutes ventes) » calculé exactement comme
+       décrit sur la fiche : espèces reçues carburant + total vente magasin,
+       moins le total des dépenses. */
+    const recapCash = brigadeCash + shopTotals.selling - allExpenseTotal;
+
+    const comparisonAlerts: any[] = [];
+    const brigadeChefById: Record<string, string> = {};
+    brigades.forEach(b => {
+      brigadeChefById[b.id] = brigadeChefs.find(c => c.id === b.chefId)?.name || '—';
+    });
+
+    (brigadeAccountings || []).forEach(acc => {
+      if (!periodBrigadeIds.has(acc.brigadeId)) return;
+      const bDate = brigadeDateById[acc.brigadeId] || '—';
+      const chefName = brigadeChefById[acc.brigadeId] || '—';
+
+      (acc.tankSummary || []).forEach((ts: any) => {
+        const ecart = ts.ecart || 0;
+        const posSeuil = settings.decalagePositifSeuil ?? 0;
+        const negSeuil = settings.decalageNegatifSeuil ?? 0;
+        const venteDirecteActif = settings.decalagePositifActif !== false;
+        const retourCuveActif = settings.decalageNegatifActif !== false;
+
+        let alertType: 'CORRECT' | 'RETOUR_CUVE' | 'VENTE_DIRECTE' = 'CORRECT';
+        if (ecart > 0) {
+          if (retourCuveActif && ecart >= (negSeuil || 0.000001)) alertType = 'RETOUR_CUVE';
+        } else if (ecart < 0) {
+          if (venteDirecteActif && Math.abs(ecart) >= (posSeuil || 0.000001)) alertType = 'VENTE_DIRECTE';
+        }
+
+        if (alertType === 'CORRECT') return;
+
+        comparisonAlerts.push({
+          id: `${acc.id}-${ts.tankId}`,
+          alertType,
+          tankName: ts.name || ts.tankId,
+          chefName,
+          decalageLiters: Math.abs(ecart),
+          decalageAmount: ts.ecartMoney || 0,
+          brigadeDate: bDate,
+        });
+      });
+    });
+
+    comparisonAlerts.sort((a, b) => a.brigadeDate.localeCompare(b.brigadeDate));
 
     return {
       tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
@@ -413,6 +455,7 @@ const DailyReport = () => {
         shopRows, shopTotals,
         allExpenseRows, allExpenseTotal,
         recapCash,
+        comparisonAlerts,
       },
     };
   }, [isGenerated, startDate, endDate, fuelSales, shopSales, expenses, brigades,
@@ -1394,22 +1437,35 @@ const DailyReport = () => {
                       {j.label} : {da(j.value)} DA
                     </span>
                   ))}
+                  <span style={{ fontWeight: 800, fontSize: 10.5, padding: '5px 11px', borderRadius: 6, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}>
+                    Total décalages pompistes : {da(f.pompisteDecalages.reduce((a, b) => a + b.money, 0))} DA
+                  </span>
                 </div>
 
-                {/* Décalages par pompiste — uniquement les totaux négatifs (manques) */}
-                {f.pompisteDecalages.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    <p style={subLabel}>Décalages pompistes (manques)</p>
+                {/* Décalages Remarqués (Étape Comparaison) */}
+                {f.comparisonAlerts && f.comparisonAlerts.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <p style={subLabel}>Décalages Remarqués (Étape Comparaison)</p>
                     <table style={tableStyle}>
-                      <thead><tr style={theadRow}>
-                        <TH>Pompiste</TH><TH align="right">Écart (L)</TH><TH align="right">Montant</TH>
+                      <thead><tr style={{ background: C.blue800 }}>
+                        <th style={{ padding: '6px 9px', textAlign: 'left', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>Type</th>
+                        <th style={{ padding: '6px 9px', textAlign: 'left', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>Cuve</th>
+                        <th style={{ padding: '6px 9px', textAlign: 'left', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>Chef</th>
+                        <th style={{ padding: '6px 9px', textAlign: 'right', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>Écart (L)</th>
+                        <th style={{ padding: '6px 9px', textAlign: 'right', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>Montant</th>
+                        <th style={{ padding: '6px 9px', textAlign: 'right', fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.4, color: '#fff' }}>Date</th>
                       </tr></thead>
                       <tbody>
-                        {f.pompisteDecalages.map((d, i) => (
-                          <tr key={i} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
-                            <TD bold color="#b91c1c">{d.pompisteName}</TD>
-                            <TD align="right">{lit(d.liters)} L</TD>
-                            <TD align="right" bold color="#dc2626">{da(d.money)} DA</TD>
+                        {f.comparisonAlerts.map((a: any, i: number) => (
+                          <tr key={a.id} style={{ background: i % 2 ? '#f8fafc' : '#fff' }}>
+                            <TD bold color={a.alertType === 'VENTE_DIRECTE' ? '#b91c1c' : '#c2410c'}>
+                              {a.alertType === 'VENTE_DIRECTE' ? 'Vente directe' : a.alertType === 'RETOUR_CUVE' ? 'Retour cuve' : a.alertType}
+                            </TD>
+                            <TD>{a.tankName || '—'}</TD>
+                            <TD>{a.chefName || '—'}</TD>
+                            <TD align="right">{lit(a.decalageLiters)} L</TD>
+                            <TD align="right" bold color="#1e293b">{da(a.decalageAmount)} DA</TD>
+                            <TD align="right">{a.brigadeDate}</TD>
                           </tr>
                         ))}
                       </tbody>
@@ -1478,7 +1534,7 @@ const DailyReport = () => {
                   {[
                     { label: 'Vente Carburant', value: f.fuelTotals.selling, bg: '#eff6ff', col: '#1d4ed8' },
                     { label: 'Vente Magasin', value: f.shopTotals.selling, bg: '#fff7ed', col: '#c2410c' },
-                    { label: 'Espèces (toutes ventes)', value: f.recapCash, bg: '#ecfdf5', col: '#047857' },
+                    { label: 'ESPÈCES (TOUTES VENTES)', value: f.recapCash, bg: '#ecfdf5', col: '#047857' },
                   ].map(c => (
                     <div key={c.label} style={{ padding: '10px 13px', background: c.bg, borderRadius: 8, border: '1px solid #e2e8f0' }}>
                       <p style={{ margin: 0, fontSize: 9, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b' }}>{c.label}</p>

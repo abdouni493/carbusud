@@ -488,8 +488,10 @@ const BrigadeChefs = () => {
 
   const handleAddAdvance = () => {
     if (!selectedChef) return;
-    const acomptes = [...(selectedChef.acomptes || []), { ...advanceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...selectedChef, acomptes } as BrigadeChef });
+    const acompte = { id: newId(), ...advanceForm, isPaid: false };
+    const acomptes = [...(selectedChef.acomptes || []), acompte];
+    setSelectedChef({ ...selectedChef, acomptes });
+    dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'chef_brigade', workerId: selectedChef.id, acompte } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Acompte enregistré" } });
     setShowAdvanceModal(false);
     setAdvanceForm({ amount: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -497,8 +499,10 @@ const BrigadeChefs = () => {
 
   const handleAddAbsence = () => {
     if (!selectedChef) return;
-    const absences = [...(selectedChef.absences || []), { ...absenceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...selectedChef, absences } as BrigadeChef });
+    const absence = { id: newId(), ...absenceForm, isPaid: false };
+    const absences = [...(selectedChef.absences || []), absence];
+    setSelectedChef({ ...selectedChef, absences });
+    dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'chef_brigade', workerId: selectedChef.id, absence } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Absence enregistrée" } });
     setShowAbsenceModal(false);
     setAbsenceForm({ cost: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -534,14 +538,31 @@ const BrigadeChefs = () => {
       isPaid: true,
     };
 
+    // Dispatch acompte & absence updates to DB
+    (selectedChef.acomptes || []).forEach(a => {
+      if (a.date.startsWith(currentMonthForPayment) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'chef_brigade', workerId: selectedChef.id, acompte: { ...a, isPaid: true, monthPaid: currentMonthForPayment } } });
+      }
+    });
+
+    (selectedChef.absences || []).forEach(a => {
+      if (a.date.startsWith(currentMonthForPayment) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'chef_brigade', workerId: selectedChef.id, absence: { ...a, isPaid: true, monthPaid: currentMonthForPayment } } });
+      }
+    });
+
+    // Dispatch add payment
     dispatch({
-      type: 'UPDATE_BRIGADE_CHEF',
-      payload: {
-        ...selectedChef,
-        acomptes: updatedAcomptes,
-        absences: updatedAbsences,
-        paymentRecord: [...(selectedChef.paymentRecord || []), record],
-      } as BrigadeChef
+      type: 'ADD_WORKER_PAYMENT',
+      payload: { workerType: 'chef_brigade', workerId: selectedChef.id, payment: record }
+    });
+
+    // Update local state
+    setSelectedChef({
+      ...selectedChef,
+      acomptes: updatedAcomptes,
+      absences: updatedAbsences,
+      paymentRecord: [...(selectedChef.paymentRecord || []), record]
     });
 
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: `Paiement de ${currentMonthForPayment} enregistré` } });

@@ -284,6 +284,17 @@ export async function dbInsert<T extends object>(table: string, row: T): Promise
 }
 
 /**
+ * Upsert a row in `table`.
+ */
+export async function dbUpsert<T extends object>(table: string, row: T): Promise<T> {
+  return withAuthRetry(async () => {
+    const { error } = await supabase.from(table).upsert(row);
+    if (error) throw new Error(`UPSERT ${table}: ${error.message}`);
+    return row;
+  });
+}
+
+/**
  * Update a row in `table`.
  * Same read-back resilience fix as dbInsert above.
  */
@@ -455,9 +466,9 @@ export const db = {
 
   // Worker payroll sub-records
   getWorkerAcomptes:       (workerId: string) => dbSelect('worker_acomptes', { worker_id: workerId }),
-  addWorkerAcompte:        (a: object) => dbInsert('worker_acomptes', a),
+  addWorkerAcompte:        (a: object) => dbUpsert('worker_acomptes', a),
   getWorkerAbsences:       (workerId: string) => dbSelect('worker_absences', { worker_id: workerId }),
-  addWorkerAbsence:        (a: object) => dbInsert('worker_absences', a),
+  addWorkerAbsence:        (a: object) => dbUpsert('worker_absences', a),
   getWorkerPaymentRecords: (workerId: string) => dbSelect('worker_payment_records', { worker_id: workerId }),
   addWorkerPaymentRecord:  (p: object) => dbInsert('worker_payment_records', p),
   markPaymentPaid: async (paymentId: string) =>

@@ -246,8 +246,10 @@ const Gerants = () => {
 
   const handleAddAdvance = () => {
     if (!selectedGerant) return;
-    const acomptes = [...(selectedGerant.acomptes || []), { ...advanceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_GERANT', payload: { ...selectedGerant, acomptes } as Gerant });
+    const acompte = { id: newId(), ...advanceForm, isPaid: false };
+    const acomptes = [...(selectedGerant.acomptes || []), acompte];
+    setSelectedGerant({ ...selectedGerant, acomptes });
+    dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'gerant', workerId: selectedGerant.id, acompte } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Acompte enregistré" } });
     setShowAdvanceModal(false);
     setAdvanceForm({ amount: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -255,8 +257,10 @@ const Gerants = () => {
 
   const handleAddAbsence = () => {
     if (!selectedGerant) return;
-    const absences = [...(selectedGerant.absences || []), { ...absenceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_GERANT', payload: { ...selectedGerant, absences } as Gerant });
+    const absence = { id: newId(), ...absenceForm, isPaid: false };
+    const absences = [...(selectedGerant.absences || []), absence];
+    setSelectedGerant({ ...selectedGerant, absences });
+    dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'gerant', workerId: selectedGerant.id, absence } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Absence enregistrée" } });
     setShowAbsenceModal(false);
     setAbsenceForm({ cost: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -292,14 +296,31 @@ const Gerants = () => {
       isPaid: true,
     };
 
+    // Dispatch acompte & absence updates to DB
+    (selectedGerant.acomptes || []).forEach(a => {
+      if (a.date.startsWith(paymentForm.month) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'gerant', workerId: selectedGerant.id, acompte: { ...a, isPaid: true, monthPaid: paymentForm.month } } });
+      }
+    });
+
+    (selectedGerant.absences || []).forEach(a => {
+      if (a.date.startsWith(paymentForm.month) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'gerant', workerId: selectedGerant.id, absence: { ...a, isPaid: true, monthPaid: paymentForm.month } } });
+      }
+    });
+
+    // Dispatch add payment
     dispatch({
-      type: 'UPDATE_GERANT',
-      payload: {
-        ...selectedGerant,
-        acomptes: updatedAcomptes,
-        absences: updatedAbsences,
-        paymentRecord: [...(selectedGerant.paymentRecord || []), record],
-      } as Gerant
+      type: 'ADD_WORKER_PAYMENT',
+      payload: { workerType: 'gerant', workerId: selectedGerant.id, payment: record }
+    });
+
+    // Update local state
+    setSelectedGerant({
+      ...selectedGerant,
+      acomptes: updatedAcomptes,
+      absences: updatedAbsences,
+      paymentRecord: [...(selectedGerant.paymentRecord || []), record]
     });
 
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: `Paiement de ${paymentForm.month} enregistré` } });

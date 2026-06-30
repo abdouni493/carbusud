@@ -251,8 +251,10 @@ const Pompistes = () => {
 
   const handleAddAdvance = () => {
     if (!selectedPompiste) return;
-    const acomptes = [...(selectedPompiste.acomptes || []), { ...advanceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_POMPISTE', payload: { ...selectedPompiste, acomptes } as Pompiste });
+    const acompte = { id: newId(), ...advanceForm, isPaid: false };
+    const acomptes = [...(selectedPompiste.acomptes || []), acompte];
+    setSelectedPompiste({ ...selectedPompiste, acomptes });
+    dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'pompiste', workerId: selectedPompiste.id, acompte } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Acompte enregistré" } });
     setShowAdvanceModal(false);
     setAdvanceForm({ amount: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -260,8 +262,10 @@ const Pompistes = () => {
 
   const handleAddAbsence = () => {
     if (!selectedPompiste) return;
-    const absences = [...(selectedPompiste.absences || []), { ...absenceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_POMPISTE', payload: { ...selectedPompiste, absences } as Pompiste });
+    const absence = { id: newId(), ...absenceForm, isPaid: false };
+    const absences = [...(selectedPompiste.absences || []), absence];
+    setSelectedPompiste({ ...selectedPompiste, absences });
+    dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'pompiste', workerId: selectedPompiste.id, absence } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Absence enregistrée" } });
     setShowAbsenceModal(false);
     setAbsenceForm({ cost: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -297,14 +301,31 @@ const Pompistes = () => {
       isPaid: true,
     };
 
+    // Dispatch acompte & absence updates to DB
+    (selectedPompiste.acomptes || []).forEach(a => {
+      if (a.date.startsWith(currentMonthForPayment) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'pompiste', workerId: selectedPompiste.id, acompte: { ...a, isPaid: true, monthPaid: currentMonthForPayment } } });
+      }
+    });
+
+    (selectedPompiste.absences || []).forEach(a => {
+      if (a.date.startsWith(currentMonthForPayment) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'pompiste', workerId: selectedPompiste.id, absence: { ...a, isPaid: true, monthPaid: currentMonthForPayment } } });
+      }
+    });
+
+    // Dispatch add payment
     dispatch({
-      type: 'UPDATE_POMPISTE',
-      payload: {
-        ...selectedPompiste,
-        acomptes: updatedAcomptes,
-        absences: updatedAbsences,
-        paymentRecord: [...(selectedPompiste.paymentRecord || []), record],
-      } as Pompiste
+      type: 'ADD_WORKER_PAYMENT',
+      payload: { workerType: 'pompiste', workerId: selectedPompiste.id, payment: record }
+    });
+
+    // Update local state
+    setSelectedPompiste({
+      ...selectedPompiste,
+      acomptes: updatedAcomptes,
+      absences: updatedAbsences,
+      paymentRecord: [...(selectedPompiste.paymentRecord || []), record]
     });
 
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: `Paiement de ${currentMonthForPayment} enregistré` } });

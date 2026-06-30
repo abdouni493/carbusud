@@ -265,8 +265,10 @@ const MagasinWorkers = () => {
 
   const handleAddAdvance = () => {
     if (!selectedWorker) return;
-    const acomptes = [...(selectedWorker.acomptes || []), { ...advanceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...selectedWorker, acomptes } as MagasinWorker });
+    const acompte = { id: newId(), ...advanceForm, isPaid: false };
+    const acomptes = [...(selectedWorker.acomptes || []), acompte];
+    setSelectedWorker({ ...selectedWorker, acomptes });
+    dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'magasin', workerId: selectedWorker.id, acompte } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Acompte enregistré" } });
     setShowAdvanceModal(false);
     setAdvanceForm({ amount: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -274,8 +276,10 @@ const MagasinWorkers = () => {
 
   const handleAddAbsence = () => {
     if (!selectedWorker) return;
-    const absences = [...(selectedWorker.absences || []), { ...absenceForm, isPaid: false }];
-    dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...selectedWorker, absences } as MagasinWorker });
+    const absence = { id: newId(), ...absenceForm, isPaid: false };
+    const absences = [...(selectedWorker.absences || []), absence];
+    setSelectedWorker({ ...selectedWorker, absences });
+    dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'magasin', workerId: selectedWorker.id, absence } });
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Absence enregistrée" } });
     setShowAbsenceModal(false);
     setAbsenceForm({ cost: 0, date: new Date().toISOString().split('T')[0], description: "" });
@@ -311,14 +315,31 @@ const MagasinWorkers = () => {
       isPaid: true,
     };
 
+    // Dispatch acompte & absence updates to DB
+    (selectedWorker.acomptes || []).forEach(a => {
+      if (a.date.startsWith(currentUnpaidMonth) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ACOMPTE', payload: { workerType: 'magasin', workerId: selectedWorker.id, acompte: { ...a, isPaid: true, monthPaid: currentUnpaidMonth } } });
+      }
+    });
+
+    (selectedWorker.absences || []).forEach(a => {
+      if (a.date.startsWith(currentUnpaidMonth) && !a.isPaid) {
+        dispatch({ type: 'UPDATE_WORKER_ABSENCE', payload: { workerType: 'magasin', workerId: selectedWorker.id, absence: { ...a, isPaid: true, monthPaid: currentUnpaidMonth } } });
+      }
+    });
+
+    // Dispatch add payment
     dispatch({
-      type: 'UPDATE_MAGASIN_WORKER',
-      payload: {
-        ...selectedWorker,
-        acomptes: updatedAcomptes,
-        absences: updatedAbsences,
-        paymentRecord: [...(selectedWorker.paymentRecord || []), record],
-      } as MagasinWorker
+      type: 'ADD_WORKER_PAYMENT',
+      payload: { workerType: 'magasin', workerId: selectedWorker.id, payment: record }
+    });
+
+    // Update local state
+    setSelectedWorker({
+      ...selectedWorker,
+      acomptes: updatedAcomptes,
+      absences: updatedAbsences,
+      paymentRecord: [...(selectedWorker.paymentRecord || []), record]
     });
 
     dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: `Paiement de ${currentUnpaidMonth} enregistré` } });

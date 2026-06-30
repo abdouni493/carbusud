@@ -1001,35 +1001,50 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'UPDATE_WORKER_ACOMPTE': {
       const { workerType, workerId, acompte } = action.payload;
-      if (workerType === 'pompiste')
-        return { ...state, pompistes: state.pompistes.map(p => p.id === workerId ? { ...p, acomptes: [...(p.acomptes || []), acompte] } : p) };
-      if (workerType === 'chef_brigade')
-        return { ...state, brigadeChefs: state.brigadeChefs.map(c => c.id === workerId ? { ...c, acomptes: [...(c.acomptes || []), acompte] } : c) };
-      if (workerType === 'gerant')
-        return { ...state, gerants: state.gerants.map(g => g.id === workerId ? { ...g, acomptes: [...(g.acomptes || []), acompte] } : g) };
-      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, acomptes: [...(m.acomptes || []), acompte] } : m) };
+      const updateList = (list: any[]) => list.map(item => {
+        if (item.id !== workerId) return item;
+        const exists = (item.acomptes || []).some((a: any) => a.id === acompte.id);
+        const acomptes = exists
+          ? (item.acomptes || []).map((a: any) => a.id === acompte.id ? acompte : a)
+          : [...(item.acomptes || []), acompte];
+        return { ...item, acomptes };
+      });
+      if (workerType === 'pompiste') return { ...state, pompistes: updateList(state.pompistes) };
+      if (workerType === 'chef_brigade') return { ...state, brigadeChefs: updateList(state.brigadeChefs) };
+      if (workerType === 'gerant') return { ...state, gerants: updateList(state.gerants) };
+      return { ...state, magasinWorkers: updateList(state.magasinWorkers) };
     }
 
     case 'UPDATE_WORKER_ABSENCE': {
       const { workerType, workerId, absence } = action.payload;
-      if (workerType === 'pompiste')
-        return { ...state, pompistes: state.pompistes.map(p => p.id === workerId ? { ...p, absences: [...(p.absences || []), absence] } : p) };
-      if (workerType === 'chef_brigade')
-        return { ...state, brigadeChefs: state.brigadeChefs.map(c => c.id === workerId ? { ...c, absences: [...(c.absences || []), absence] } : c) };
-      if (workerType === 'gerant')
-        return { ...state, gerants: state.gerants.map(g => g.id === workerId ? { ...g, absences: [...(g.absences || []), absence] } : g) };
-      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, absences: [...(m.absences || []), absence] } : m) };
+      const updateList = (list: any[]) => list.map(item => {
+        if (item.id !== workerId) return item;
+        const exists = (item.absences || []).some((a: any) => a.id === absence.id);
+        const absences = exists
+          ? (item.absences || []).map((a: any) => a.id === absence.id ? absence : a)
+          : [...(item.absences || []), absence];
+        return { ...item, absences };
+      });
+      if (workerType === 'pompiste') return { ...state, pompistes: updateList(state.pompistes) };
+      if (workerType === 'chef_brigade') return { ...state, brigadeChefs: updateList(state.brigadeChefs) };
+      if (workerType === 'gerant') return { ...state, gerants: updateList(state.gerants) };
+      return { ...state, magasinWorkers: updateList(state.magasinWorkers) };
     }
 
     case 'ADD_WORKER_PAYMENT': {
       const { workerType, workerId, payment } = action.payload;
-      if (workerType === 'pompiste')
-        return { ...state, pompistes: state.pompistes.map(p => p.id === workerId ? { ...p, paymentRecord: [...(p.paymentRecord || []), payment] } : p) };
-      if (workerType === 'chef_brigade')
-        return { ...state, brigadeChefs: state.brigadeChefs.map(c => c.id === workerId ? { ...c, paymentRecord: [...(c.paymentRecord || []), payment] } : c) };
-      if (workerType === 'gerant')
-        return { ...state, gerants: state.gerants.map(g => g.id === workerId ? { ...g, paymentRecord: [...(g.paymentRecord || []), payment] } : g) };
-      return { ...state, magasinWorkers: state.magasinWorkers.map(m => m.id === workerId ? { ...m, paymentRecord: [...(m.paymentRecord || []), payment] } : m) };
+      const updateList = (list: any[]) => list.map(item => {
+        if (item.id !== workerId) return item;
+        const exists = (item.paymentRecord || []).some((p: any) => p.id === payment.id);
+        const paymentRecord = exists
+          ? (item.paymentRecord || []).map((p: any) => p.id === payment.id ? payment : p)
+          : [...(item.paymentRecord || []), payment];
+        return { ...item, paymentRecord };
+      });
+      if (workerType === 'pompiste') return { ...state, pompistes: updateList(state.pompistes) };
+      if (workerType === 'chef_brigade') return { ...state, brigadeChefs: updateList(state.brigadeChefs) };
+      if (workerType === 'gerant') return { ...state, gerants: updateList(state.gerants) };
+      return { ...state, magasinWorkers: updateList(state.magasinWorkers) };
     }
 
     case 'ADD_SUPPLIER_APPOINTMENT':
@@ -1857,45 +1872,47 @@ async function refetchEntityAfterAction(
       }
       // ── Pompistes ───────────────────────────────────────────────────────
       case 'ADD_POMPISTE': case 'UPDATE_POMPISTE': case 'DELETE_POMPISTE':
-      case 'UPDATE_WORKER_ACOMPTE': case 'UPDATE_WORKER_ABSENCE':
-      case 'ADD_WORKER_PAYMENT': case 'MARK_PAYMENT_PAID':
       case 'UPDATE_WORKER_PERMISSIONS': {
-        const raw = await db.getPompistes();
-        const aRaw = await supabase.from('worker_acomptes').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []);
-        const bRaw = await supabase.from('worker_absences').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []);
-        const pRaw = await supabase.from('worker_payment_records').select('*').eq('worker_type', 'pompiste').then(r => r.data ?? []);
-        const pompistes = (raw as any[]).map(p => {
-          const m = mapPompiste(p);
-          m.acomptes      = (aRaw as any[]).filter(a => a.worker_id === p.id).map(mapAcompte);
-          m.absences      = (bRaw as any[]).filter(a => a.worker_id === p.id).map(mapAbsence);
-          m.paymentRecord = (pRaw as any[]).filter(r => r.worker_id === p.id).map(mapPaymentRecord);
-          return m;
-        });
+        const pompistes = await loadPompistesEnriched();
         dispatch({ type: 'HYDRATE', payload: { pompistes } });
+        break;
+      }
+      case 'UPDATE_WORKER_ACOMPTE':
+      case 'UPDATE_WORKER_ABSENCE':
+      case 'ADD_WORKER_PAYMENT':
+      case 'MARK_PAYMENT_PAID': {
+        const workerType = (action as any).payload?.workerType;
+        if (workerType === 'pompiste') {
+          const pompistes = await loadPompistesEnriched();
+          dispatch({ type: 'HYDRATE', payload: { pompistes } });
+        } else if (workerType === 'chef_brigade') {
+          const brigadeChefs = await loadBrigadeChefsEnriched();
+          dispatch({ type: 'HYDRATE', payload: { brigadeChefs } });
+        } else if (workerType === 'gerant') {
+          const gerants = await loadGerantsEnriched();
+          dispatch({ type: 'HYDRATE', payload: { gerants } });
+        } else if (workerType === 'magasin') {
+          const magasinWorkers = await loadMagasinWorkersEnriched();
+          dispatch({ type: 'HYDRATE', payload: { magasinWorkers } });
+        }
         break;
       }
       // ── Brigade Chefs ────────────────────────────────────────────────────
       case 'ADD_BRIGADE_CHEF': case 'UPDATE_BRIGADE_CHEF': case 'DELETE_BRIGADE_CHEF': {
-        const raw = await db.getBrigadeChefs();
-        const assignRaw = await supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []);
-        const brigadeChefs = (raw as any[]).map(c => {
-          const m = mapBrigadeChef(c);
-          m.pompisteIds = (assignRaw as any[]).filter(a => a.chef_id === c.id).map(a => a.pompiste_id);
-          return m;
-        });
+        const brigadeChefs = await loadBrigadeChefsEnriched();
         dispatch({ type: 'HYDRATE', payload: { brigadeChefs } });
         break;
       }
       // ── Gérants ──────────────────────────────────────────────────────────
       case 'ADD_GERANT': case 'UPDATE_GERANT': case 'DELETE_GERANT': {
-        const raw = await db.getGerants();
-        dispatch({ type: 'HYDRATE', payload: { gerants: (raw as any[]).map(mapGerant) } });
+        const gerants = await loadGerantsEnriched();
+        dispatch({ type: 'HYDRATE', payload: { gerants } });
         break;
       }
       // ── Magasin workers ───────────────────────────────────────────────────
       case 'ADD_MAGASIN_WORKER': case 'UPDATE_MAGASIN_WORKER': case 'DELETE_MAGASIN_WORKER': {
-        const raw = await db.getMagasinWorkers();
-        dispatch({ type: 'HYDRATE', payload: { magasinWorkers: (raw as any[]).map(mapMagasinWorker) } });
+        const magasinWorkers = await loadMagasinWorkersEnriched();
+        dispatch({ type: 'HYDRATE', payload: { magasinWorkers } });
         break;
       }
       // ── Suppliers ─────────────────────────────────────────────────────────
