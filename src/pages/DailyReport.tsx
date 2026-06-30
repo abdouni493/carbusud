@@ -395,12 +395,9 @@ const DailyReport = () => {
     const allExpenseRows = [...expenseRows, ...acompteRows, ...salaryRows];
     const allExpenseTotal = allExpenseRows.reduce((s, r) => s + (r.amount || 0), 0);
 
-    /* E. Récapitulation — « Espèces (toutes ventes) » calculé exactement comme
-       décrit sur la fiche : espèces reçues carburant + total vente magasin,
-       moins (vente magasin + vente carburant), moins le total des dépenses. */
-    const recapCash = brigadeCash + shopTotals.selling
-      - (shopTotals.selling + fuelTotals.selling)
-      - allExpenseTotal;
+    /* E. Récapitulation — « Espèces (toutes ventes) » d'après les valeurs
+       affichées sur la fiche : Vente Carburant + Vente Magasin − Total Dépenses. */
+    const recapCash = fuelTotals.selling + shopTotals.selling - allExpenseTotal;
 
     return {
       tankSummary, pumpSummary, brigadeDetails, payments, shopRevenue, shopEspeces, shopDette,
