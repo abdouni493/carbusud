@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Tank, Product, Pump, Inventory as InventoryType } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Tank, Product, Pump, Inventory as InventoryType } from "../store/AppContext";
 import EmptyState from "../components/EmptyState";
 import ConfirmDialog from "../components/ConfirmDialog";
 
@@ -580,6 +580,7 @@ const ComparisonView = ({ inventory, tanks, pumps, products, onAdjust, onBack, i
 ════════════════════════════════════════ */
 const Inventory = () => {
   const { tanks, pumps, products, settings, inventories } = useAppState();
+  const perm = useModulePermission('Inventaires');
   const dispatch = useAppDispatch();
 
   /* View state */
@@ -714,7 +715,7 @@ const Inventory = () => {
           <h1 className="text-4xl font-black text-blue-900 italic uppercase tracking-tighter leading-none">Inventaires Physiques</h1>
           <p className="text-sm text-slate-400 font-medium mt-1">Réconciliation des stocks système vs. stocks mesurés</p>
         </div>
-        {view === "list" && (
+        {view === "list" && perm.creer && (
           <button onClick={() => { resetForm(); setView("create"); }}
             className="h-13 px-8 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-white shadow-xl hover:scale-105 transition-all flex items-center gap-3"
             style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})`, boxShadow: `0 12px 35px ${C.blue600}40` }}>
@@ -793,11 +794,13 @@ const Inventory = () => {
                               <Printer className="w-4 h-4" />
                             </button>
                             {/* Delete */}
+                            {perm.supprimer && (
                             <button title="Supprimer"
                               onClick={() => { setDeleteTargetId(inv.id); setShowDeleteConfirm(true); }}
                               className="p-2 rounded-xl text-slate-300 hover:bg-red-50 hover:text-red-600 transition-all cursor-pointer">
                               <Trash2 className="w-4 h-4" />
                             </button>
+                            )}
                           </div>
                         </td>
                       </motion.tr>

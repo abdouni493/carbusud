@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
-import { useAppState } from "../store/AppContext";
+import { useAppState, useModulePermission } from "../store/AppContext";
 import { exportElementToPdf } from "../lib/pdf";
 import * as XLSX from "xlsx";
 
@@ -170,6 +170,7 @@ const Reports = () => {
     products, brigadeChefs, pompistes, gerants, magasinWorkers, clients,
     suppliers, purchases, settings, tracks
   } = useAppState();
+  const perm = useModulePermission('Rapports');
 
   const [activeCategory, setActiveCategory] = useState("Opérations");
   const [startDate, setStartDate] = useState(
@@ -1175,15 +1176,19 @@ const Reports = () => {
           </p>
         </div>
         <div className="flex gap-3">
+          {perm.exporter && (
           <button onClick={generateExcel}
             className="h-14 px-6 bg-white border-2 border-slate-200 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:border-blue-900 hover:text-blue-900 transition-all shadow-sm">
             <Download className="w-4 h-4" /> EXCEL
           </button>
+          )}
+          {perm.imprimer && (
           <button onClick={generatePDF}
             className="h-14 px-8 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl hover:scale-105 transition-all"
             style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
             <Printer className="w-4 h-4" /> PDF
           </button>
+          )}
         </div>
       </div>
 

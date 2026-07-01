@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Brigade, Pump, Tank, Pompiste, Client, BrigadeDecalageAlert, BrigadeAccounting, BrigadeAccountingJustification } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Brigade, Pump, Tank, Pompiste, Client, BrigadeDecalageAlert, BrigadeAccounting, BrigadeAccountingJustification } from "../store/AppContext";
 import { useNavigate } from "react-router-dom";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -50,6 +50,7 @@ const Brigades = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { brigades, pumps, tanks, pompistes, brigadeChefs, settings, currentUserRole, currentUserId, currentUserName, workers, gerants, magasinWorkers, tracks, pumpNozzles = [], brigadeAccountings = [], shopSales = [], clients = [] } = useAppState();
+  const perm = useModulePermission('Brigades');
   const dispatch = useAppDispatch();
 
   const [showModal, setShowModal] = useState(false);
@@ -906,7 +907,7 @@ const Brigades = () => {
               : 'Historique des rotations et relevés d\'index.'}
           </p>
         </div>
-        {(currentUserRole === 'admin' || currentUserRole === 'chef_brigade') && (
+        {perm.creer && (
           <button onClick={() => { setEditingBrigade(null); resetForm(); setShowModal(true); }} className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3 italic">
             <Plus className="w-5 h-5 text-[#FFB800]" /> CRÉER NOUVELLE BRIGADE
           </button>
@@ -1200,7 +1201,7 @@ const Brigades = () => {
                                   className="absolute right-0 mt-2 w-52 bg-white border border-slate-100 rounded-xl shadow-lg z-50 overflow-hidden"
                                 >
                                   <div className="divide-y divide-slate-100">
-                                    {currentUserRole !== 'gerant' && (
+                                    {perm.modifier && (
                                       <button
                                         onClick={() => { resetForm(); loadBrigadeIntoWizard(b); }}
                                         className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
@@ -1223,7 +1224,7 @@ const Brigades = () => {
                                       <FileText className="w-4 h-4" /> Fiche
                                     </button>
 
-                                    {currentUserRole !== 'gerant' && (
+                                    {perm.supprimer && (
                                       <button
                                         onClick={() => { setSelectedBrigade(b); setShowConfirmDelete(true); setActionMenuOpen(null); }}
                                         className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"

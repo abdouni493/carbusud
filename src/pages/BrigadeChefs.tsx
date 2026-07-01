@@ -45,9 +45,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, BrigadeChef, Pompiste, Brigade } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, BrigadeChef, Pompiste, Brigade } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
-import { getDefaultPermissions } from "../lib/permissionDefaults";
+import { emptyPermissions } from "../lib/permissionDefaults";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
 import PermissionsModal from "../components/PermissionsModal";
@@ -87,6 +87,7 @@ const ChefCard: React.FC<ChefCardProps> = ({
   onPermissions
 }) => {
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const perm = useModulePermission('Chefs de Brigade');
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentMonthAcomptes = (chef.acomptes || []).filter(a => !a.isPaid && a.date.startsWith(currentMonth)).reduce((sum, a) => sum + a.amount, 0);
   const isMonthPaid = (chef.paymentRecord || []).some(pr => pr.month === currentMonth && pr.isPaid);
@@ -140,9 +141,11 @@ const ChefCard: React.FC<ChefCardProps> = ({
                   <button onClick={() => { onDetail(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                     <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
                   </button>
+                  {perm.modifier && (
                   <button onClick={() => { onEdit(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                     <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                   </button>
+                  )}
                   <button onClick={() => { onAdvance(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                     <Wallet className="w-4 h-4 text-amber-500" /> Acompte
                   </button>
@@ -158,9 +161,11 @@ const ChefCard: React.FC<ChefCardProps> = ({
                   <button onClick={() => { onPermissions(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                     <Shield className="w-4 h-4 text-red-500" /> Permissions
                   </button>
+                  {perm.supprimer && (
                   <button onClick={() => { onDelete(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                     <Trash2 className="w-4 h-4" /> Supprimer
                   </button>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -241,6 +246,7 @@ const ChefCard: React.FC<ChefCardProps> = ({
 const BrigadeChefs = () => {
   const { t } = useTranslation();
   const { brigadeChefs, pompistes, brigades, fuelSales, settings } = useAppState();
+  const perm = useModulePermission('Chefs de Brigade');
   const dispatch = useAppDispatch();
 
   // Modals state
@@ -397,7 +403,7 @@ const BrigadeChefs = () => {
         acomptes: [],
         absences: [],
         paymentRecord: [],
-        permissions: getDefaultPermissions('chef_brigade'),
+        permissions: emptyPermissions(),
       };
       dispatch({ type: 'ADD_BRIGADE_CHEF', payload: newChef });
 
@@ -613,12 +619,14 @@ const BrigadeChefs = () => {
           <h1 className="text-3xl font-black text-blue-900 uppercase italic tracking-tighter leading-none">Gestion des Chefs de Brigade</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gérez vos responsables d'équipe, leurs assignations et leur paie.</p>
         </div>
-        <button 
+        {perm.creer && (
+        <button
           onClick={() => { resetForm(); setShowModal(true); }}
           className="btn-primary h-14 px-8 tracking-[0.2em]"
         >
           <Plus className="w-5 h-5" /> RECRUTER UN CHEF
         </button>
+        )}
       </div>
 
       {/* Toolbar */}

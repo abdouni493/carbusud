@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId, degreesFromLiters } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, DeliveryNote, DeliveryNoteItem, Tank } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, DeliveryNote, DeliveryNoteItem, Tank } from "../store/AppContext";
 import { uploadFile, BUCKETS } from "../lib/supabase";
 import EmptyState from "../components/EmptyState";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -34,6 +34,7 @@ const todayStr = () => new Date().toISOString().split("T")[0];
 
 const DeliveryNotes = () => {
   const { deliveryNotes, suppliers, tanks, settings } = useAppState();
+  const perm = useModulePermission('Livraisons');
   const dispatch = useAppDispatch();
 
   const [showModal, setShowModal] = useState(false);
@@ -345,12 +346,14 @@ const DeliveryNotes = () => {
           <h1 className="text-3xl font-black text-[#001f5c] uppercase tracking-tighter leading-none">Bons de Livraison</h1>
           <p className="text-slate-500 font-medium mt-2 leading-relaxed">Gérez vos livraisons carburant multi-cuves, stocks et scans.</p>
         </div>
+        {perm.creer && (
         <button
           onClick={openCreate}
           className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3"
         >
           <Plus className="w-5 h-5 text-[#FFB800]" /> NOUVEAU BON DE LIVRAISON
         </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -480,12 +483,16 @@ const DeliveryNotes = () => {
                           <button onClick={() => { setSelectedBL(bl); setShowDetail(true); }} className="p-2.5 hover:bg-blue-50 text-slate-400 hover:text-[#001f5c] rounded-xl transition-all" title="Voir détails">
                             <Eye className="w-5 h-5" />
                           </button>
+                          {perm.modifier && (
                           <button onClick={() => openEdit(bl)} className="p-2.5 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-xl transition-all" title="Modifier">
                             <Edit2 className="w-5 h-5" />
                           </button>
+                          )}
+                          {perm.supprimer && (
                           <button onClick={() => setBlToDelete(bl)} className="p-2.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-xl transition-all" title="Supprimer">
                             <Trash2 className="w-5 h-5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>

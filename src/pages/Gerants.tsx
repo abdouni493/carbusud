@@ -9,9 +9,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, GerantWorker, Track, BrigadeChef } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, GerantWorker, Track, BrigadeChef } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
-import { getDefaultPermissions } from "../lib/permissionDefaults";
+import { emptyPermissions } from "../lib/permissionDefaults";
 
 // Username must be 3-32 chars: lowercase letters, digits, dot, underscore, hyphen
 const USERNAME_REGEX = /^[a-z0-9._-]{3,32}$/;
@@ -27,6 +27,7 @@ const Gerants = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { gerants, tracks, brigadeChefs, fuelSales, settings } = useAppState();
+  const perm = useModulePermission('Gérants');
   const dispatch = useAppDispatch();
 
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -156,7 +157,7 @@ const Gerants = () => {
         paymentRecord: [],
         acomptes: [],
         absences: [],
-        permissions: getDefaultPermissions('gerant'),
+        permissions: emptyPermissions(),
       };
       dispatch({ type: 'ADD_GERANT', payload: newGerant });
 
@@ -364,12 +365,14 @@ const Gerants = () => {
           <h1 className="text-3xl font-black text-[#002d87] uppercase italic tracking-tighter leading-none">Gestion des Gérants</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gérez vos gérants de station et leur paie.</p>
         </div>
-        <button 
+        {perm.creer && (
+        <button
           onClick={() => { resetForm(); setShowModal(true); }}
           className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3 italic"
         >
           <Plus className="w-5 h-5 text-[#FFB800]" /> AJOUTER UN GÉRANT
         </button>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -440,9 +443,11 @@ const Gerants = () => {
                       <button onClick={() => { setSelectedGerant(g); setShowDetailModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
                       </button>
+                      {perm.modifier && (
                       <button onClick={() => { setSelectedGerant(g); setForm(g); setShowModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                       </button>
+                      )}
                       <button onClick={() => { setSelectedGerant(g); setShowAdvanceModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Wallet className="w-4 h-4 text-amber-500" /> Acompte
                       </button>
@@ -458,9 +463,11 @@ const Gerants = () => {
                       <button onClick={() => { setSelectedGerant(g); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Shield className="w-4 h-4 text-red-500" /> Permissions
                       </button>
+                      {perm.supprimer && (
                       <button onClick={() => { setSelectedGerant(g); setShowConfirmDelete(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                         <Trash2 className="w-4 h-4" /> Supprimer
                       </button>
+                      )}
                     </div>
                   </motion.div>
                 )}

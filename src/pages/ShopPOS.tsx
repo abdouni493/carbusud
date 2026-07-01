@@ -9,12 +9,13 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
 import { uploadFile, BUCKETS } from "../lib/supabase";
-import { useAppState, useAppDispatch, Product, Client, ShopSale } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Product, Client, ShopSale } from "../store/AppContext";
 import toast from "react-hot-toast";
 
 const ShopPOS = () => {
   const { t } = useTranslation();
   const { products, clients, settings, shopSales, currentUserId, currentUserRole, pompistes, brigadeChefs, gerants, magasinWorkers, users } = useAppState();
+  const perm = useModulePermission('Magasin');
   const dispatch = useAppDispatch();
 
   // Navigation tab
@@ -1418,13 +1419,15 @@ const ShopPOS = () => {
 
                     {/* Quick Action Strip */}
                     <div className="px-5 py-3 border-b border-slate-100 flex gap-2 shrink-0 bg-white">
+                      {perm.imprimer && (
                       <button
                         onClick={() => { setReceiptSale(selectedHistorySale); setShowReceipt(true); }}
                         className="flex-1 py-2.5 bg-slate-50 hover:bg-[#003087]/5 text-[#003087] rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-slate-200 transition-all cursor-pointer font-bold"
                       >
                         <Printer className="w-3.5 h-3.5" /> Ticket Facture
                       </button>
-                      
+                      )}
+
                       {selectedHistorySale.status === "Dette" && (
                         <button
                           onClick={() => handleOpenPayDebt(selectedHistorySale)}
@@ -1434,19 +1437,23 @@ const ShopPOS = () => {
                         </button>
                       )}
 
+                      {perm.modifier && (
                       <button
                         onClick={() => handleOpenEditModal(selectedHistorySale)}
                         className="flex-1 py-2.5 bg-slate-50 hover:bg-amber-500/10 text-amber-600 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-slate-200 transition-all cursor-pointer font-bold"
                       >
                         <Edit2 className="w-3.5 h-3.5" /> Modifier
                       </button>
+                      )}
 
+                      {perm.supprimer && (
                       <button
                         onClick={() => setShowConfirmDeleteId(selectedHistorySale.id)}
                         className="flex-1 py-2.5 bg-slate-50 hover:bg-red-500 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-slate-200 hover:border-transparent transition-all cursor-pointer font-bold"
                       >
                         <Trash2 className="w-3.5 h-3.5" /> Supprimer
                       </button>
+                      )}
                     </div>
 
                     {/* Scrollable details panel */}

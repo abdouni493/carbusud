@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
-import { useAppState } from "../store/AppContext";
+import { useAppState, useModulePermission } from "../store/AppContext";
 import * as XLSX from "xlsx";
 
 /* ── Colour palette matching the Sidebar ── */
@@ -111,6 +111,7 @@ const Statistics = () => {
     fuelSales, shopSales, pumps, products, tanks, brigades,
     brigadeChefs, pompistes, expenses, deliveryNotes, purchases
   } = useAppState();
+  const perm = useModulePermission('Statistiques');
 
   const [period, setPeriod]   = useState<string>("Ce mois");
   const [dataType, setDataType] = useState("Tous");
@@ -249,15 +250,19 @@ const Statistics = () => {
           </p>
         </div>
         <div className="flex gap-3">
+          {perm.exporter && (
           <button onClick={exportXLS}
             className="h-12 px-6 bg-white border border-slate-200 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:border-blue-900 hover:text-blue-900 transition-all shadow-sm">
             <Download className="w-4 h-4" /> EXCEL
           </button>
+          )}
+          {perm.imprimer && (
           <button onClick={() => window.print()}
             className="h-12 px-6 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl transition-all hover:scale-105"
             style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
             <Printer className="w-4 h-4" /> IMPRIMER
           </button>
+          )}
         </div>
       </div>
 

@@ -47,12 +47,13 @@ import {
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch } from "@/src/store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission } from "@/src/store/AppContext";
 import { toast } from "react-hot-toast";
 
 const Expenses = () => {
   const { t } = useTranslation();
   const { expenses, settings } = useAppState();
+  const perm = useModulePermission('Dépenses');
   const dispatch = useAppDispatch();
   
   const [showModal, setShowModal] = useState(false);
@@ -365,12 +366,14 @@ const Expenses = () => {
            >
               {viewMode === "grid" ? <BarChartIcon className="w-4 h-4" /> : <Layers className="w-4 h-4" />} {viewMode === "grid" ? "Analyses" : "Liste"}
            </button>
-           <button 
+           {perm.creer && (
+           <button
             onClick={() => { setSelectedExpense(null); setShowModal(true); }}
             className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3 italic"
            >
             <Plus className="w-5 h-5 text-[#FFB800]" /> NOUVELLE DÉPENSE
            </button>
+           )}
         </div>
       </div>
 
@@ -490,24 +493,30 @@ const Expenses = () => {
                             className="absolute right-0 mt-2 w-52 bg-white border border-slate-100 rounded-2xl shadow-2xl z-[60] overflow-hidden"
                           >
                             <div className="divide-y divide-slate-100">
-                              <button 
+                              {perm.modifier && (
+                              <button
                                 onClick={() => { handleEdit(expense); setOpenMenuId(null); }}
                                 className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors"
                               >
                                 <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                               </button>
-                              <button 
+                              )}
+                              {perm.imprimer && (
+                              <button
                                 onClick={() => { handlePrint(expense); setOpenMenuId(null); }}
                                 className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors"
                               >
                                 <Printer className="w-4 h-4 text-slate-500" /> Imprimer
                               </button>
-                              <button 
+                              )}
+                              {perm.supprimer && (
+                              <button
                                 onClick={() => { handleDelete(expense.id); setOpenMenuId(null); }}
                                 className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
                               >
                                 <Trash2 className="w-4 h-4" /> Supprimer
                               </button>
+                              )}
                             </div>
                           </motion.div>
                         )}

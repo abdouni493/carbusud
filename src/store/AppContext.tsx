@@ -622,6 +622,15 @@ export interface UserPermissions {
   [moduleId: string]: UserPermission;
 }
 
+/** A reusable, named set of permissions the admin can save per role and apply
+ *  to any worker with one click (see the Template Manager page). */
+export interface PermissionTemplate {
+  id: string;
+  name: string;
+  role: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin';
+  permissions: UserPermissions;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -710,6 +719,7 @@ export interface AppState {
   dailyReports: DailyReport[];
   settings: StationSettings;
   users: User[];
+  permissionTemplates: PermissionTemplate[];
   toasts: ToastMessage[];
   activityLog: { id: string; timestamp: string; userId: string; action: string; details: string }[];
   isRtl: boolean;
@@ -746,7 +756,7 @@ const initialState: AppState = {
   fuelInvoices: [], fuelReceipts: [],
   purchases: [], fuelSales: [], shopSales: [], inventories: [], dailyReports: [],
   settings: emptySettings,
-  users: [], toasts: [], activityLog: [],
+  users: [], permissionTemplates: [], toasts: [], activityLog: [],
   isRtl: false,
   gerants: [], magasinWorkers: [], productBrands: [], drivers: [],
   currentUserRole: 'admin',
@@ -847,6 +857,10 @@ type AppAction =
   | { type: 'UPDATE_BRIGADE_STATUS'; payload: { brigadeId: string; isActive: boolean; status: string } }
   | { type: 'MARK_PAYMENT_PAID'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; paymentId: string } }
   | { type: 'UPDATE_WORKER_PERMISSIONS'; payload: { workerType: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; workerId: string; permissions: UserPermissions } }
+  | { type: 'SET_PERMISSION_TEMPLATES'; payload: PermissionTemplate[] }
+  | { type: 'ADD_PERMISSION_TEMPLATE'; payload: PermissionTemplate }
+  | { type: 'UPDATE_PERMISSION_TEMPLATE'; payload: PermissionTemplate }
+  | { type: 'DELETE_PERMISSION_TEMPLATE'; payload: string }
   | { type: 'SET_CURRENT_USER'; payload: { role: 'admin' | 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'; id?: string; name?: string; avatarUrl?: string; permissions?: UserPermissions } }
   | { type: 'ADD_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
   | { type: 'UPDATE_BRIGADE_ACCOUNTING'; payload: BrigadeAccounting }
@@ -892,6 +906,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'ADD_NOZZLE':    return { ...state, pumpNozzles: [...(state.pumpNozzles || []), action.payload] };
     case 'UPDATE_NOZZLE': return { ...state, pumpNozzles: (state.pumpNozzles || []).map(n => n.id === action.payload.id ? action.payload : n) };
     case 'DELETE_NOZZLE': return { ...state, pumpNozzles: (state.pumpNozzles || []).filter(n => n.id !== action.payload) };
+
+    case 'SET_PERMISSION_TEMPLATES': return { ...state, permissionTemplates: action.payload };
+    case 'ADD_PERMISSION_TEMPLATE':  return { ...state, permissionTemplates: [...state.permissionTemplates, action.payload] };
+    case 'UPDATE_PERMISSION_TEMPLATE': return { ...state, permissionTemplates: state.permissionTemplates.map(t => t.id === action.payload.id ? action.payload : t) };
+    case 'DELETE_PERMISSION_TEMPLATE': return { ...state, permissionTemplates: state.permissionTemplates.filter(t => t.id !== action.payload) };
 
     case 'ADD_TRACK':    return { ...state, tracks: [...state.tracks, action.payload] };
     case 'UPDATE_TRACK': return { ...state, tracks: state.tracks.map(t => t.id === action.payload.id ? action.payload : t) };
@@ -1124,6 +1143,9 @@ function mapPump(r: any): Pump {
   return { id: r.id, number: r.number, name: r.name, tankId: r.tank_id, trackId: r.track_id, type: r.type, lastIndex: +r.last_index, status: r.status, currentBrigadeStartIndex: r.current_brigade_start_index ? +r.current_brigade_start_index : undefined };
 }
 function mapTrack(r: any): Track { return { id: r.id, name: r.name }; }
+function mapPermissionTemplate(r: any): PermissionTemplate {
+  return { id: r.id, name: r.name, role: r.role, permissions: (r.permissions ?? {}) as UserPermissions };
+}
 function mapDriver(r: any): Driver {
   return {
     id: r.id,
@@ -1382,6 +1404,13 @@ async function syncToSupabase(action: AppAction): Promise<void> {
         await db.updateTank(action.payload.id, { name: action.payload.name, type: action.payload.type, capacity: action.payload.capacity, current: action.payload.current, degrees: action.payload.degrees, alert_threshold: action.payload.alertThreshold, notes: action.payload.notes });
         break;
       case 'DELETE_TANK': await db.deleteTank(action.payload); break;
+      case 'ADD_PERMISSION_TEMPLATE':
+        await db.addPermissionTemplate({ id: action.payload.id, name: action.payload.name, role: action.payload.role, permissions: action.payload.permissions });
+        break;
+      case 'UPDATE_PERMISSION_TEMPLATE':
+        await db.updatePermissionTemplate(action.payload.id, { name: action.payload.name, role: action.payload.role, permissions: action.payload.permissions, updated_at: new Date().toISOString() });
+        break;
+      case 'DELETE_PERMISSION_TEMPLATE': await db.deletePermissionTemplate(action.payload); break;
       case 'ADD_TRACK':    await db.addTrack({ id: action.payload.id, name: action.payload.name }); break;
       case 'UPDATE_TRACK': await db.updateTrack(action.payload.id, { name: action.payload.name, updated_at: new Date().toISOString() }); break;
       case 'DELETE_TRACK': await db.deleteTrack(action.payload); break;
@@ -2149,6 +2178,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           clientsRaw, suppliersRaw,
           brigadesRaw, settingsRaw,
           brigadeAssignmentsRaw, chefAssignmentsRaw,
+          permissionTemplatesRaw,
         ] = await Promise.all([
           db.getTanks(),
           db.getPumps(),
@@ -2167,6 +2197,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           db.getSettings(),
           supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []),
           supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []),
+          db.getPermissionTemplates().catch(() => []),
         ]);
 
         if (cancelled) return;
@@ -2202,6 +2233,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         });
 
         const settings = settingsRaw ? mapSettings(settingsRaw) : emptySettings;
+        const permissionTemplates = (permissionTemplatesRaw as any[]).map(mapPermissionTemplate);
 
         // Release loading spinner; app can render now
         clearTimeout(phase1Timeout);
@@ -2213,7 +2245,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           payload: {
             tanks, pumps, pumpNozzles, tracks, drivers, products, productBrands: brands,
             pompistes, brigadeChefs, gerants, magasinWorkers,
-            clients, suppliers, brigades, settings,
+            clients, suppliers, brigades, settings, permissionTemplates,
             // Transactional tables start empty; filled by Phase 2 momentarily
             fuelSales: [], shopSales: [], deliveryNotes: [], purchases: [],
             expenses: [], inventories: [], dailyReports: [],

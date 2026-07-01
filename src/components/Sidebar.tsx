@@ -94,6 +94,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
       { label: "Chefs de Brigade", icon: UserCog,    path: "/brigade-chefs",   moduleId: "Chefs de Brigade" },
       { label: "Gérants",          icon: Building2,  path: "/gerants",         moduleId: "Gérants" },
       { label: "Employés Magasin", icon: Store,      path: "/magasin-workers", moduleId: "Employés Magasin" },
+      { label: "Modèles Permissions", icon: Shield,  path: "/roles-permissions", moduleId: "Paramètres" },
     ]
   },
   {

@@ -543,6 +543,12 @@ export const db = {
   getDailyReports: () => dbSelect('daily_reports'),
   addDailyReport:  (r: object) => dbInsert('daily_reports', r),
 
+  // Permission Templates (reusable per-role permission presets)
+  getPermissionTemplates:    () => dbSelect('permission_templates'),
+  addPermissionTemplate:     (t: object) => dbInsert('permission_templates', t),
+  updatePermissionTemplate:  (id: string, t: object) => dbUpdate('permission_templates', id, t),
+  deletePermissionTemplate:  (id: string) => dbDelete('permission_templates', id),
+
   // Admin Profiles
   getAdminProfiles: () => dbSelect('admin_profiles'),
   getAdminProfile: async (id: string) => {

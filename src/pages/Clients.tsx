@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Client } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Client } from "../store/AppContext";
 import { useNavigate } from "react-router-dom";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -49,6 +49,7 @@ const Clients = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { clients, fuelSales, shopSales } = useAppState();
+  const perm = useModulePermission('Clients');
   const dispatch = useAppDispatch();
 
   // Layout and filter states
@@ -327,7 +328,8 @@ const Clients = () => {
           <h1 className="text-3xl font-black text-blue-900 uppercase italic tracking-tighter leading-none">Gestion des Clients</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gérez vos comptes clients, crédits et avances de fonds.</p>
         </div>
-        <button 
+        {perm.creer && (
+        <button
           onClick={() => { 
             setSelectedClient(null); 
             setClientForm({ 
@@ -354,6 +356,7 @@ const Clients = () => {
         >
           <Plus className="w-5 h-5 text-[#FFB800]" /> NOUVEAU CLIENT
         </button>
+        )}
       </div>
 
       {/* Filters Toolbar */}
@@ -471,12 +474,14 @@ const Clients = () => {
                             >
                               <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
                             </button>
-                            <button 
+                            {perm.modifier && (
+                            <button
                               onClick={() => { setSelectedClient(c); setClientForm(c); setShowModal(true); setActionMenuOpen(null); }}
                               className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors"
                             >
                               <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                             </button>
+                            )}
                             {c.paymentMode === "ADVANCE" && (
                               <button 
                                 onClick={() => { setSelectedClient(c); setShowRecharge(true); setActionMenuOpen(null); }}
@@ -493,12 +498,14 @@ const Clients = () => {
                                 <DollarSign className="w-4 h-4 text-emerald-500" /> Enregistrer Paiement
                               </button>
                             )}
-                            <button 
+                            {perm.supprimer && (
+                            <button
                               onClick={() => { setClientToDelete(c); setActionMenuOpen(null); }}
                               className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
                             >
                               <Trash2 className="w-4 h-4" /> Supprimer
                             </button>
+                            )}
                           </div>
                         </motion.div>
                       )}
@@ -635,8 +642,8 @@ const Clients = () => {
                       <td className="px-8 py-5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <button onClick={() => { setSelectedClient(c); setActiveTab("resume"); setShowDetail(true); }} className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-300 hover:text-blue-900 transition-all border border-transparent hover:border-slate-200" title="Détails"><Eye className="w-4 h-4" /></button>
-                          <button onClick={() => { setSelectedClient(c); setClientForm(c); setShowModal(true); }} className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-300 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200" title="Modifier"><Edit2 className="w-4 h-4" /></button>
-                          <button onClick={() => setClientToDelete(c)} className="p-2.5 hover:bg-red-50 rounded-xl text-slate-200 hover:text-red-600 transition-all border border-transparent hover:border-red-100" title="Supprimer"><Trash2 className="w-4 h-4" /></button>
+                          {perm.modifier && <button onClick={() => { setSelectedClient(c); setClientForm(c); setShowModal(true); }} className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-300 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200" title="Modifier"><Edit2 className="w-4 h-4" /></button>}
+                          {perm.supprimer && <button onClick={() => setClientToDelete(c)} className="p-2.5 hover:bg-red-50 rounded-xl text-slate-200 hover:text-red-600 transition-all border border-transparent hover:border-red-100" title="Supprimer"><Trash2 className="w-4 h-4" /></button>}
                         </div>
                       </td>
                     </motion.tr>

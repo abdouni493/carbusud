@@ -36,13 +36,14 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Supplier } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Supplier } from "../store/AppContext";
 import EmptyState from "../components/EmptyState";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 const Suppliers = () => {
   const { t } = useTranslation();
   const { suppliers, deliveryNotes } = useAppState();
+  const perm = useModulePermission('Fournisseurs');
   const dispatch = useAppDispatch();
 
   // View state controls
@@ -279,7 +280,8 @@ const Suppliers = () => {
           <h1 className="text-3xl font-black text-blue-900 uppercase italic tracking-tighter leading-none">Gestion des Fournisseurs</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gérez vos partenaires commerciaux et suivez vos dettes fournisseurs.</p>
         </div>
-        <button 
+        {perm.creer && (
+        <button
           onClick={() => { 
             setSelectedSupplier(null); 
             setForm({
@@ -300,6 +302,7 @@ const Suppliers = () => {
         >
           <Plus className="w-5 h-5 text-[#FFB800]" /> NOUVEAU FOURNISSEUR
         </button>
+        )}
       </div>
 
       {/* Toolbar / Filters */}
@@ -411,24 +414,28 @@ const Suppliers = () => {
                               >
                                 <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
                               </button>
-                              <button 
-                                onClick={() => { setSelectedSupplier(s); setForm(s); setShowModal(true); setActionMenuOpen(null); }} 
+                              {perm.modifier && (
+                              <button
+                                onClick={() => { setSelectedSupplier(s); setForm(s); setShowModal(true); setActionMenuOpen(null); }}
                                 className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors"
                               >
                                 <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                               </button>
+                              )}
                               <button 
                                 onClick={() => { setSelectedSupplier(s); setActiveTab("achats"); setShowDetail(true); setActionMenuOpen(null); }} 
                                 className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors"
                               >
                                 <CreditCard className="w-4 h-4 text-emerald-500" /> Dettes & Factures
                               </button>
-                              <button 
-                                onClick={() => { setSelectedSupplier(s); setSupplierToDelete(s); setActionMenuOpen(null); }} 
+                              {perm.supprimer && (
+                              <button
+                                onClick={() => { setSelectedSupplier(s); setSupplierToDelete(s); setActionMenuOpen(null); }}
                                 className="w-full px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
                               >
                                 <Trash2 className="w-4 h-4" /> Supprimer
                               </button>
+                              )}
                             </div>
                           </motion.div>
                         )}
@@ -578,8 +585,8 @@ const Suppliers = () => {
                         <td className="px-8 py-5 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button onClick={() => { setSelectedSupplier(s); setActiveTab("resume"); setShowDetail(true); }} className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-300 hover:text-blue-900 transition-all border border-transparent hover:border-slate-200" title="Détails"><Eye className="w-4 h-4" /></button>
-                            <button onClick={() => { setSelectedSupplier(s); setForm(s); setShowModal(true); }} className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-300 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200" title="Modifier"><Edit2 className="w-4 h-4" /></button>
-                            <button onClick={() => setSupplierToDelete(s)} className="p-2.5 hover:bg-red-50 rounded-xl text-slate-200 hover:text-red-600 transition-all border border-transparent hover:border-red-100" title="Supprimer"><Trash2 className="w-4 h-4" /></button>
+                            {perm.modifier && <button onClick={() => { setSelectedSupplier(s); setForm(s); setShowModal(true); }} className="p-2.5 hover:bg-slate-100 rounded-xl text-slate-300 hover:text-blue-600 transition-all border border-transparent hover:border-slate-200" title="Modifier"><Edit2 className="w-4 h-4" /></button>}
+                            {perm.supprimer && <button onClick={() => setSupplierToDelete(s)} className="p-2.5 hover:bg-red-50 rounded-xl text-slate-200 hover:text-red-600 transition-all border border-transparent hover:border-red-100" title="Supprimer"><Trash2 className="w-4 h-4" /></button>}
                           </div>
                         </td>
                       </motion.tr>

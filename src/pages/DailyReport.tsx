@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
-import { useAppState, useAppDispatch } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission } from "../store/AppContext";
 import { exportElementToPdf, printDocumentMode } from "../lib/pdf";
 import Skeleton from "../components/Skeleton";
 
@@ -79,6 +79,7 @@ const DailyReport = () => {
     fuelSales, shopSales, settings, brigadeChefs, pompistes, purchases, clients,
     tracks, brigadeAccountings, gerants, magasinWorkers, brigadeDecalageAlerts = []
   } = useAppState();
+  const perm = useModulePermission('Fiche Journalière');
 
   const reportRef = useRef<HTMLDivElement>(null);
   const ficheRef = useRef<HTMLDivElement>(null);
@@ -533,16 +534,20 @@ const DailyReport = () => {
         </div>
         {isGenerated && (
           <div className="flex gap-3">
+            {perm.exporter && (
             <button onClick={handleExportPDF} disabled={isPdfLoading}
               className="h-12 px-6 bg-white border-2 border-blue-900 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-blue-900 hover:bg-blue-900 hover:text-yellow-400 transition-all shadow-sm disabled:opacity-60">
               {isPdfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               {isPdfLoading ? 'Export...' : 'Télécharger PDF'}
             </button>
+            )}
+            {perm.imprimer && (
             <button onClick={handlePrint}
               className="h-12 px-6 rounded-2xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white shadow-xl transition-all hover:scale-105 no-print"
               style={{ background: `linear-gradient(135deg, ${C.blue800}, ${C.blue600})` }}>
               <Printer className="w-4 h-4" /> Imprimer
             </button>
+            )}
           </div>
         )}
       </div>

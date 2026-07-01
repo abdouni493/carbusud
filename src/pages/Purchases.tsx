@@ -22,13 +22,14 @@ import {
   AlertCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { useAppState, useAppDispatch, Product, Supplier, Purchase, PurchaseItem, DEFAULT_PRODUCT_UNITS } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Product, Supplier, Purchase, PurchaseItem, DEFAULT_PRODUCT_UNITS } from "../store/AppContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { cn, newId } from "@/src/lib/utils";
 
 const Purchases = () => {
   const { t } = useTranslation();
   const { products, suppliers, purchases, settings } = useAppState();
+  const perm = useModulePermission('Achats');
   const dispatch = useAppDispatch();
 
   // Filters
@@ -621,6 +622,7 @@ const Purchases = () => {
             Gérez les achats de produits de boutique et les commandes fournisseurs.
           </p>
         </div>
+        {perm.creer && (
         <button
           onClick={() => handleOpenCreate()}
           className="h-14 px-8 bg-gradient-to-r from-[#001f5c] via-[#002d85] to-[#001f5c] text-[#FFB800] border border-blue-900 hover:border-[#FFB800] rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-blue-950/20 hover:scale-105 transition-all flex items-center gap-3 italic"
@@ -628,6 +630,7 @@ const Purchases = () => {
           <Plus className="w-5 h-5 text-[#FFB800]" />
           Nouvel Achat / Commande
         </button>
+        )}
       </div>
 
       {/* KPI Cards */}
@@ -796,6 +799,7 @@ const Purchases = () => {
                             </button>
                           )}
 
+                          {perm.modifier && (
                           <button
                             onClick={() => handleOpenCreate(purchase)}
                             className="p-2 hover:bg-blue-50 hover:text-blue-900 rounded-lg text-slate-400 transition-colors"
@@ -803,7 +807,9 @@ const Purchases = () => {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
+                          )}
 
+                          {perm.supprimer && (
                           <button
                             onClick={() => setPurchaseToDelete(purchase)}
                             className="p-2 hover:bg-red-50 hover:text-red-600 rounded-lg text-slate-400 transition-colors"
@@ -811,6 +817,7 @@ const Purchases = () => {
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>

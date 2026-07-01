@@ -9,9 +9,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Pompiste, Track, BrigadeChef } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Pompiste, Track, BrigadeChef } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
-import { getDefaultPermissions } from "../lib/permissionDefaults";
+import { emptyPermissions } from "../lib/permissionDefaults";
 import { useNavigate } from "react-router-dom";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -24,6 +24,7 @@ const Pompistes = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pompistes, tracks, brigadeChefs, fuelSales, settings } = useAppState();
+  const perm = useModulePermission('Pompistes');
   const dispatch = useAppDispatch();
 
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -159,7 +160,7 @@ const Pompistes = () => {
         paymentRecord: [],
         acomptes: [],
         absences: [],
-        permissions: getDefaultPermissions('pompiste'),
+        permissions: emptyPermissions(),
       };
       dispatch({ type: 'ADD_POMPISTE', payload: newPompiste });
 
@@ -369,12 +370,14 @@ const Pompistes = () => {
           <h1 className="text-3xl font-black text-blue-900 uppercase italic tracking-tighter leading-none">Gestion des Pompistes</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gérez votre personnel de piste, leurs assignations et leur paie.</p>
         </div>
-        <button 
+        {perm.creer && (
+        <button
           onClick={() => { resetForm(); setShowModal(true); }}
           className="btn-primary h-14 px-8 tracking-[0.2em]"
         >
           <Plus className="w-5 h-5" /> RECRUTER UN POMPISTE
         </button>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -444,9 +447,11 @@ const Pompistes = () => {
                       <button onClick={() => { setSelectedPompiste(p); setShowDetailModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
                       </button>
+                      {perm.modifier && (
                       <button onClick={() => { setSelectedPompiste(p); setForm(p); setShowModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                       </button>
+                      )}
                       <button onClick={() => { setSelectedPompiste(p); setShowAdvanceModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Wallet className="w-4 h-4 text-amber-500" /> Acompte
                       </button>
@@ -462,9 +467,11 @@ const Pompistes = () => {
                       <button onClick={() => { setSelectedPompiste(p); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Shield className="w-4 h-4 text-red-500" /> Permissions
                       </button>
+                      {perm.supprimer && (
                       <button onClick={() => { setSelectedPompiste(p); setShowConfirmDelete(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                         <Trash2 className="w-4 h-4" /> Supprimer
                       </button>
+                      )}
                     </div>
                   </motion.div>
                 )}

@@ -7,10 +7,18 @@ import {
 import type React from 'react';
 import type { UserPermission, UserPermissions } from '../store/AppContext';
 
+/** The 7 concrete action flags (everything except `voir`, which is the master
+ *  "show this interface" toggle). Only the actions a module actually offers are
+ *  listed on that module, so the editor mirrors the real buttons of each page. */
+export type ActionKey =
+  | 'creer' | 'modifier' | 'supprimer' | 'imprimer' | 'exporter' | 'scanner' | 'generer';
+
 export interface ModuleDef {
   id: string;
   label: string;
   icon: React.ElementType;
+  /** Sub-actions this interface supports (drives the buttons shown in the editor). */
+  actions: ActionKey[];
 }
 
 export interface GroupDef {
@@ -18,73 +26,94 @@ export interface GroupDef {
   modules: ModuleDef[];
 }
 
+/** Friendly labels for every permission flag (used across the permission editor). */
+export const ACTION_META: Record<keyof UserPermission, { label: string; short: string }> = {
+  voir:      { label: 'Voir',      short: 'V' },
+  creer:     { label: 'Créer',     short: 'C' },
+  modifier:  { label: 'Modifier',  short: 'M' },
+  supprimer: { label: 'Supprimer', short: 'S' },
+  imprimer:  { label: 'Imprimer',  short: 'I' },
+  exporter:  { label: 'Exporter',  short: 'E' },
+  scanner:   { label: 'Scanner',   short: 'Sc' },
+  generer:   { label: 'Générer',   short: 'G' },
+};
+
+// Master map of every interface that can appear in an admin sidebar, grouped
+// exactly like the admin navigation. Each module declares only the real actions
+// its page exposes, so the editor never shows a meaningless toggle.
 export const GROUPS: GroupDef[] = [
   {
     title: "Général",
     modules: [
-      { id: "Tableau de bord", label: "Dashboard", icon: LayoutDashboard },
+      { id: "Tableau de bord", label: "Tableau de bord", icon: LayoutDashboard, actions: [] },
     ],
   },
   {
     title: "Opérations",
     modules: [
-      { id: "Brigades",         label: "Brigades",         icon: Target },
-      { id: "Ma Brigade",       label: "Ma Brigade",       icon: Target },
-      { id: "Planning",         label: "Planning",         icon: Calendar },
-      { id: "Ventes Carburant", label: "Ventes Carburant", icon: Fuel },
-      { id: "Magasin",          label: "Vente Magasin",    icon: Store },
+      { id: "Brigades",         label: "Brigades",         icon: Target,   actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'generer'] },
+      { id: "Ma Brigade",       label: "Ma Brigade",       icon: Target,   actions: ['imprimer'] },
+      { id: "Planning",         label: "Planning",         icon: Calendar, actions: ['creer', 'modifier', 'supprimer'] },
+      { id: "Ventes Carburant", label: "Ventes Carburant", icon: Fuel,     actions: ['creer', 'imprimer', 'scanner'] },
+      { id: "Magasin",          label: "Vente Magasin",    icon: Store,    actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'scanner'] },
     ],
   },
   {
     title: "Carburant",
     modules: [
-      { id: "Cuves",      label: "Cuves",      icon: Gauge },
-      { id: "Pompes",     label: "Pompes",     icon: Wrench },
-      { id: "Pistes",     label: "Pistes",     icon: Map },
-      { id: "Livraisons", label: "Livraisons", icon: ClipboardList },
+      { id: "Cuves",      label: "Cuves",      icon: Gauge,         actions: ['creer', 'modifier', 'supprimer'] },
+      { id: "Pompes",     label: "Pompes",     icon: Wrench,        actions: ['creer', 'modifier', 'supprimer'] },
+      { id: "Pistes",     label: "Pistes",     icon: Map,           actions: ['creer', 'modifier', 'supprimer'] },
+      { id: "Livraisons", label: "Livraisons", icon: ClipboardList, actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
     ],
   },
   {
     title: "Magasin",
     modules: [
-      { id: "Produits",    label: "Produits",   icon: Package },
-      { id: "Achats",      label: "Achats",     icon: ShoppingCart },
-      { id: "Inventaires", label: "Inventaire", icon: Archive },
+      { id: "Produits",    label: "Produits",   icon: Package, actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'exporter', 'scanner'] },
+      { id: "Achats",      label: "Achats",     icon: ShoppingCart, actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+      { id: "Inventaires", label: "Inventaire", icon: Archive, actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
     ],
   },
   {
     title: "Contacts",
     modules: [
-      { id: "Clients",      label: "Clients",      icon: Users },
-      { id: "Fournisseurs", label: "Fournisseurs", icon: Truck },
+      { id: "Clients",      label: "Clients",      icon: Users, actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'exporter'] },
+      { id: "Fournisseurs", label: "Fournisseurs", icon: Truck, actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'exporter'] },
     ],
   },
   {
     title: "Personnel",
     modules: [
-      { id: "Pompistes",         label: "Pompistes",         icon: UsersRound },
-      { id: "Chefs de Brigade",  label: "Chefs de Brigade",  icon: UserCog },
-      { id: "Gérants",           label: "Gérants",           icon: Building2 },
-      { id: "Employés Magasin",  label: "Employés Magasin",  icon: Store },
-      { id: "Mes Paiements",     label: "Mes Paiements",     icon: Wallet },
+      { id: "Pompistes",         label: "Pompistes",         icon: UsersRound, actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+      { id: "Chefs de Brigade",  label: "Chefs de Brigade",  icon: UserCog,    actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+      { id: "Gérants",           label: "Gérants",           icon: Building2,  actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+      { id: "Employés Magasin",  label: "Employés Magasin",  icon: Store,      actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+      { id: "Mes Paiements",     label: "Mes Paiements",     icon: Wallet,     actions: ['imprimer'] },
     ],
   },
   {
     title: "Finances",
     modules: [
-      { id: "Dépenses",          label: "Dépenses",          icon: CreditCard },
-      { id: "Fiche Journalière", label: "Fiche Journalière", icon: FileText },
+      { id: "Dépenses",          label: "Dépenses",          icon: CreditCard, actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'exporter'] },
+      { id: "Fiche Journalière", label: "Fiche Journalière", icon: FileText,   actions: ['imprimer', 'exporter'] },
     ],
   },
   {
     title: "Analytique & Paramètres",
     modules: [
-      { id: "Statistiques", label: "Statistiques", icon: BarChart2 },
-      { id: "Rapports",     label: "Rapports",     icon: Receipt },
-      { id: "Paramètres",   label: "Paramètres",   icon: SettingsIcon },
+      { id: "Statistiques", label: "Statistiques", icon: BarChart2,    actions: ['imprimer', 'exporter'] },
+      { id: "Rapports",     label: "Rapports",     icon: Receipt,      actions: ['imprimer', 'exporter'] },
+      { id: "Paramètres",   label: "Paramètres",   icon: SettingsIcon, actions: ['modifier'] },
     ],
   },
 ];
+
+/** Flat list of every module id → def, for quick lookups. */
+export const ALL_MODULES: ModuleDef[] = GROUPS.flatMap(g => g.modules);
+export const MODULE_BY_ID: Record<string, ModuleDef> = Object.fromEntries(
+  ALL_MODULES.map(m => [m.id, m])
+);
 
 export const emptyPermission: UserPermission = {
   voir: false, creer: false, modifier: false, supprimer: false,
@@ -101,7 +130,15 @@ export const viewOnlyPermission: UserPermission = {
   imprimer: false, exporter: false, scanner: false, generer: false,
 };
 
-/** Build the default permission set for a worker role. */
+/** A worker created with no template gets NOTHING — every interface hidden until
+ *  the admin programs permissions for them. */
+export function emptyPermissions(): UserPermissions {
+  return {};
+}
+
+/** Build the default permission set for a worker role. Kept as an optional
+ *  built-in template the admin can *choose* to apply — it is NOT used as an
+ *  automatic fallback anymore (new workers start empty). */
 export function getDefaultPermissions(
   role: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'
 ): UserPermissions {
@@ -128,8 +165,8 @@ export function getDefaultPermissions(
   else if (role === 'chef_brigade') {
     // Dashboard: view own brigade info + payment summary
     perms["Tableau de bord"]  = { ...viewOnlyPermission };
-    // Brigades: see only his own brigades (latest first) — view + modify + print, NO delete, NO accounting button (enforced in Brigades.tsx)
-    perms["Brigades"]         = { voir: true, creer: false, modifier: true, supprimer: false, imprimer: true, exporter: false, scanner: false, generer: false };
+    // Brigades: chef creates/manages his own brigades — view + create + modify + print, NO delete
+    perms["Brigades"]         = { voir: true, creer: true, modifier: true, supprimer: false, imprimer: true, exporter: false, scanner: false, generer: false };
     // Fuel sales: full access
     perms["Ventes Carburant"] = { ...fullPermission };
     // Cuves: view only (chef needs to see tank levels)
@@ -147,7 +184,8 @@ export function getDefaultPermissions(
       perms[m.id] = { ...viewOnlyPermission };
     }));
     // Give full access to operational modules
-    perms["Brigades"]          = { ...fullPermission };
+    // Brigades: gérant reviews/consults but never creates, edits or deletes (destructive/cascading operation)
+    perms["Brigades"]          = { voir: true, creer: false, modifier: false, supprimer: false, imprimer: true, exporter: false, scanner: false, generer: false };
     perms["Ventes Carburant"]  = { ...fullPermission };
     perms["Magasin"]           = { ...fullPermission };
     perms["Cuves"]             = { ...viewOnlyPermission };

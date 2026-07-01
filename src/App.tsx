@@ -11,7 +11,6 @@ import { AppProvider, useAppState, useAppDispatch, UserPermissions } from "./sto
 import { ToastContainer } from "./components/Toast";
 import { useAuth } from "./hooks/useAuth";
 import { db, supabase, BUCKETS, getPublicUrl } from "./lib/supabase";
-import { getDefaultPermissions } from "./lib/permissionDefaults";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Tanks from "./pages/Tanks";
@@ -249,9 +248,10 @@ function AppContent({
               // so subsequent lookups (permissions, connectedUser) succeed.
               const savedPerms = w.permissions as UserPermissions | null | undefined;
               const hasRealPermissions = savedPerms && Object.keys(savedPerms).length > 0;
-              const resolvedPermissions: UserPermissions = hasRealPermissions
-                ? savedPerms!
-                : getDefaultPermissions(userRole as 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin');
+              // No automatic default: a worker whose permissions were never
+              // programmed gets NOTHING (only the always-on dashboard). Access is
+              // granted exclusively by what the admin saved.
+              const resolvedPermissions: UserPermissions = hasRealPermissions ? savedPerms! : {};
               dispatch({
                 type: 'SET_CURRENT_USER',
                 payload: { role: userRole as any, id: w.id as string, name: w.name as string, avatarUrl, permissions: resolvedPermissions },

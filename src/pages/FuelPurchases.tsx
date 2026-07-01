@@ -10,7 +10,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import { cn, newId, degreesFromLiters } from "@/src/lib/utils";
 import { uploadFile, BUCKETS } from "../lib/supabase";
 import {
-  useAppState, useAppDispatch, DeliveryNote, DeliveryNoteItem, FuelInvoice, FuelReceipt,
+  useAppState, useAppDispatch, useModulePermission, DeliveryNote, DeliveryNoteItem, FuelInvoice, FuelReceipt,
 } from "../store/AppContext";
 
 const todayStr = () => new Date().toISOString().split("T")[0];
@@ -80,6 +80,7 @@ interface BLFormItem {
 
 const BonsLivraisonTab = () => {
   const { deliveryNotes, suppliers, tanks, drivers, settings } = useAppState();
+  const perm = useModulePermission('Livraisons');
   const dispatch = useAppDispatch();
 
   // Default purchase price (DA/L) for a tank, from Settings → fuelBuyPrices by fuel type
@@ -337,9 +338,11 @@ const BonsLivraisonTab = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-2xl font-black text-[#003087] uppercase tracking-tighter">Bons de Livraison</h2>
+        {perm.creer && (
         <button onClick={openCreate} className="h-12 px-6 bg-[#003087] text-[#FFB800] rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all shadow-lg">
           <Plus className="w-4 h-4" /> Nouveau Bon de Livraison
         </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -403,8 +406,8 @@ const BonsLivraisonTab = () => {
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => { setSelectedBL(bl); setShowDetail(true); }} className="p-2 hover:bg-blue-50 text-slate-400 hover:text-[#003087] rounded-lg transition-all" title="Voir détails"><Eye className="w-5 h-5" /></button>
-                        <button onClick={() => openEdit(bl)} className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg transition-all" title="Modifier"><Edit2 className="w-5 h-5" /></button>
-                        <button onClick={() => setBlToDelete(bl)} className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition-all" title="Supprimer"><Trash2 className="w-5 h-5" /></button>
+                        {perm.modifier && <button onClick={() => openEdit(bl)} className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg transition-all" title="Modifier"><Edit2 className="w-5 h-5" /></button>}
+                        {perm.supprimer && <button onClick={() => setBlToDelete(bl)} className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition-all" title="Supprimer"><Trash2 className="w-5 h-5" /></button>}
                       </div>
                     </td>
                   </tr>
@@ -586,8 +589,8 @@ const BonsLivraisonTab = () => {
                   {selectedBL.photos && selectedBL.photos.length > 0 && (
                     <a href={selectedBL.photos[0]} target="_blank" rel="noopener noreferrer" className="h-10 px-4 bg-blue-50 text-blue-700 rounded-xl text-[9px] font-black uppercase flex items-center gap-1.5"><Download className="w-4 h-4" /> Photo BL</a>
                   )}
-                  <button onClick={() => openEdit(selectedBL)} className="h-10 px-4 bg-amber-50 text-amber-700 rounded-xl text-[9px] font-black uppercase flex items-center gap-1.5 hover:bg-amber-100"><Edit2 className="w-4 h-4" /> Modifier</button>
-                  <button onClick={() => { setBlToDelete(selectedBL); setShowDetail(false); }} className="h-10 px-4 bg-red-50 text-red-600 rounded-xl text-[9px] font-black uppercase flex items-center gap-1.5 hover:bg-red-100"><Trash2 className="w-4 h-4" /> Supprimer</button>
+                  {perm.modifier && <button onClick={() => openEdit(selectedBL)} className="h-10 px-4 bg-amber-50 text-amber-700 rounded-xl text-[9px] font-black uppercase flex items-center gap-1.5 hover:bg-amber-100"><Edit2 className="w-4 h-4" /> Modifier</button>}
+                  {perm.supprimer && <button onClick={() => { setBlToDelete(selectedBL); setShowDetail(false); }} className="h-10 px-4 bg-red-50 text-red-600 rounded-xl text-[9px] font-black uppercase flex items-center gap-1.5 hover:bg-red-100"><Trash2 className="w-4 h-4" /> Supprimer</button>}
                   <button onClick={() => { setShowDetail(false); setSelectedBL(null); }} className="p-2 hover:bg-slate-100 rounded-xl"><X className="w-5 h-5" /></button>
                 </div>
               </div>
@@ -659,6 +662,7 @@ const BonsLivraisonTab = () => {
 
 const FacturationTab = () => {
   const { fuelInvoices, deliveryNotes, suppliers, tanks } = useAppState();
+  const perm = useModulePermission('Livraisons');
   const dispatch = useAppDispatch();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -826,7 +830,7 @@ const FacturationTab = () => {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-2xl font-black text-[#003087] uppercase tracking-tighter">Factures Carburant</h2>
-        <button onClick={openCreate} className="h-12 px-6 bg-[#003087] text-[#FFB800] rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"><Plus className="w-4 h-4" /> Nouvelle Facture</button>
+        {perm.creer && <button onClick={openCreate} className="h-12 px-6 bg-[#003087] text-[#FFB800] rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"><Plus className="w-4 h-4" /> Nouvelle Facture</button>}
       </div>
 
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 space-y-4">
@@ -884,8 +888,8 @@ const FacturationTab = () => {
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100">
                       <button onClick={() => { setSelectedInvoice(f); setShowDetailModal(true); }} className="p-2 hover:bg-blue-50 text-slate-400 hover:text-[#003087] rounded-lg" title="Détails"><Eye className="w-5 h-5" /></button>
-                      <button onClick={() => openEdit(f)} className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg" title="Modifier"><Edit2 className="w-5 h-5" /></button>
-                      <button onClick={() => setInvoiceToDelete(f)} className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg" title="Supprimer"><Trash2 className="w-5 h-5" /></button>
+                      {perm.modifier && <button onClick={() => openEdit(f)} className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg" title="Modifier"><Edit2 className="w-5 h-5" /></button>}
+                      {perm.supprimer && <button onClick={() => setInvoiceToDelete(f)} className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg" title="Supprimer"><Trash2 className="w-5 h-5" /></button>}
                     </div>
                   </td>
                 </tr>
@@ -1101,6 +1105,7 @@ const FacturationTab = () => {
 
 const PaiementsTab = () => {
   const { fuelReceipts, fuelInvoices } = useAppState();
+  const perm = useModulePermission('Livraisons');
   const dispatch = useAppDispatch();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -1242,7 +1247,7 @@ const PaiementsTab = () => {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-2xl font-black text-[#003087] uppercase tracking-tighter">Reçus de Paiement</h2>
-        <button onClick={openCreate} className="h-12 px-6 bg-[#003087] text-[#FFB800] rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"><Plus className="w-4 h-4" /> Nouveau Reçu</button>
+        {perm.creer && <button onClick={openCreate} className="h-12 px-6 bg-[#003087] text-[#FFB800] rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"><Plus className="w-4 h-4" /> Nouveau Reçu</button>}
       </div>
 
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 space-y-4">
@@ -1295,8 +1300,8 @@ const PaiementsTab = () => {
                     <div className="flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100">
                       {r.rest > 0 && <button onClick={() => { setPayRestReceipt(r); setPayRestAmount(r.rest); }} className="p-2 hover:bg-green-50 text-green-500 hover:text-green-700 rounded-lg" title="Payer le reste"><DollarSign className="w-5 h-5" /></button>}
                       <button onClick={() => { setSelectedReceipt(r); setShowDetailModal(true); }} className="p-2 hover:bg-blue-50 text-slate-400 hover:text-[#003087] rounded-lg" title="Détails"><Eye className="w-5 h-5" /></button>
-                      <button onClick={() => openEdit(r)} className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg" title="Modifier"><Edit2 className="w-5 h-5" /></button>
-                      <button onClick={() => setReceiptToDelete(r)} className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg" title="Supprimer"><Trash2 className="w-5 h-5" /></button>
+                      {perm.modifier && <button onClick={() => openEdit(r)} className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-600 rounded-lg" title="Modifier"><Edit2 className="w-5 h-5" /></button>}
+                      {perm.supprimer && <button onClick={() => setReceiptToDelete(r)} className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg" title="Supprimer"><Trash2 className="w-5 h-5" /></button>}
                     </div>
                   </td>
                 </tr>

@@ -24,9 +24,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, MagasinWorker, Track, BrigadeChef } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, MagasinWorker, Track, BrigadeChef } from "../store/AppContext";
 import { provisionWorkerAccount } from "../lib/supabase";
-import { getDefaultPermissions } from "../lib/permissionDefaults";
+import { emptyPermissions } from "../lib/permissionDefaults";
 import { useNavigate } from "react-router-dom";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -39,6 +39,7 @@ const MagasinWorkers = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { magasinWorkers: workers, tracks, brigadeChefs, fuelSales, settings } = useAppState();
+  const perm = useModulePermission('Employés Magasin');
   const dispatch = useAppDispatch();
 
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -176,7 +177,7 @@ const MagasinWorkers = () => {
         paymentRecord: [],
         acomptes: [],
         absences: [],
-        permissions: getDefaultPermissions('magasin'),
+        permissions: emptyPermissions(),
       };
       dispatch({ type: 'ADD_MAGASIN_WORKER', payload: newWorker });
 
@@ -383,12 +384,14 @@ const MagasinWorkers = () => {
           <h1 className="text-3xl font-black text-blue-900 uppercase italic tracking-tighter leading-none">Gestion des Employés Magasin</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gérez votre personnel de magasin et leur paie.</p>
         </div>
-        <button 
+        {perm.creer && (
+        <button
           onClick={() => { resetForm(); setShowModal(true); }}
           className="btn-primary h-14 px-8 tracking-[0.2em]"
         >
           <Plus className="w-5 h-5" /> AJOUTER UN EMPLOYÉ
         </button>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -459,9 +462,11 @@ const MagasinWorkers = () => {
                       <button onClick={() => { setSelectedWorker(w); setShowDetailModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
                       </button>
+                      {perm.modifier && (
                       <button onClick={() => { setSelectedWorker(w); setForm(w); setShowModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
                       </button>
+                      )}
                       <button onClick={() => { setSelectedWorker(w); setShowAdvanceModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Wallet className="w-4 h-4 text-amber-500" /> Acompte
                       </button>
@@ -477,9 +482,11 @@ const MagasinWorkers = () => {
                       <button onClick={() => { setSelectedWorker(w); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <Shield className="w-4 h-4 text-red-500" /> Permissions
                       </button>
+                      {perm.supprimer && (
                       <button onClick={() => { setSelectedWorker(w); setShowConfirmDelete(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                         <Trash2 className="w-4 h-4" /> Supprimer
                       </button>
+                      )}
                     </div>
                   </motion.div>
                 )}

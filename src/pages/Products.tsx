@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn, newId } from "@/src/lib/utils";
-import { useAppState, useAppDispatch, Product, DEFAULT_PRODUCT_UNITS } from "../store/AppContext";
+import { useAppState, useAppDispatch, useModulePermission, Product, DEFAULT_PRODUCT_UNITS } from "../store/AppContext";
 import { uploadFile, BUCKETS } from "../lib/supabase";
 import EmptyState from "../components/EmptyState";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -751,6 +751,7 @@ const ProductDetailsModal = ({ isOpen, product, onClose }: any) => {
 
 // Component: Product Card Menu (Controls dropdown visibility at page level)
 const ProductCardMenu = ({ product, isOpen, setIsOpen, onEdit, onDelete, onDetails, onAdjustStock }: any) => {
+  const perm = useModulePermission('Produits');
   return (
     <div className="relative">
       <motion.button 
@@ -780,24 +781,30 @@ const ProductCardMenu = ({ product, isOpen, setIsOpen, onEdit, onDelete, onDetai
               >
                 <Eye className="w-4 h-4 text-slate-500" /> Voir Détails
               </button>
-              <button 
+              {perm.modifier && (
+              <button
                 onClick={() => { onEdit(); setIsOpen(null); }}
                 className="w-full px-4 py-3 text-left text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors italic"
               >
                 <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
               </button>
-              <button 
+              )}
+              {perm.modifier && (
+              <button
                 onClick={() => { onAdjustStock(); setIsOpen(null); }}
                 className="w-full px-4 py-3 text-left text-xs font-bold text-blue-600 hover:bg-blue-50 flex items-center gap-3 transition-colors italic"
               >
                 <ArrowUpRight className="w-4 h-4 text-blue-500" /> Ajuster Stock
               </button>
-              <button 
+              )}
+              {perm.supprimer && (
+              <button
                 onClick={() => { onDelete(); setIsOpen(null); }}
                 className="w-full px-4 py-3 text-left text-xs font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors italic"
               >
                 <Trash2 className="w-4 h-4 text-red-500" /> Supprimer
               </button>
+              )}
             </div>
           </motion.div>
         )}
@@ -809,6 +816,7 @@ const ProductCardMenu = ({ product, isOpen, setIsOpen, onEdit, onDelete, onDetai
 const Products = () => {
   const { t } = useTranslation();
   const { products, settings, productBrands } = useAppState();
+  const perm = useModulePermission('Produits');
   const dispatch = useAppDispatch();
 
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -1060,6 +1068,7 @@ const Products = () => {
           <h1 className="text-3xl font-black text-blue-900 uppercase italic tracking-tighter leading-none">Catalogue Boutique / Stock</h1>
           <p className="text-slate-500 font-medium mt-2 italic leading-relaxed">Gerez vos articles, surveillez les ruptures et importez vos inventaires.</p>
         </div>
+        {perm.creer && (
         <div className="flex gap-3">
            <button onClick={() => fileInputRef.current?.click()} className="h-14 px-6 bg-white border border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400 rounded-2xl hover:bg-slate-50 transition-all flex items-center gap-3 shadow-xl italic cursor-pointer">
               <Upload className="w-5 h-5 opacity-40 text-blue-900" /> Import Excel
@@ -1072,6 +1081,7 @@ const Products = () => {
             <Plus className="w-5 h-5" /> NOUVEAU PRODUIT
            </button>
         </div>
+        )}
       </div>
 
       {/* Toolbar */}
