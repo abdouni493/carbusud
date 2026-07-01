@@ -44,3 +44,32 @@ set permissions = jsonb_set(
   '{Brigades,supprimer}', 'false'::jsonb
 )
 where permissions ? 'Brigades';
+
+-- 3. The sidebar's single "Livraisons" entry was renamed to "Achats Carburant"
+--    and split into 3 independently-permissioned tabs (Bons de Livraison /
+--    Facturation / Paiements) so each can be shown/hidden separately, with
+--    its own button-level permissions, in the redesigned Permissions screen.
+--    Carry forward whatever access existing workers already had on the old
+--    combined "Livraisons" permission onto the new parent + all 3 tabs, then
+--    drop the now-unused key. Without this, workers who previously had
+--    "Livraisons" access would lose the "Achats Carburant" page entirely.
+do $$
+declare
+  tbl text;
+begin
+  foreach tbl in array array['pompistes','brigade_chefs','gerants','magasin_workers']
+  loop
+    execute format($f$
+      update public.%I
+      set permissions =
+        (permissions - 'Livraisons')
+        || jsonb_build_object(
+             'Achats Carburant', permissions->'Livraisons',
+             'Achats Carburant:Bons de Livraison', permissions->'Livraisons',
+             'Achats Carburant:Facturation', permissions->'Livraisons',
+             'Achats Carburant:Paiements', permissions->'Livraisons'
+           )
+      where permissions ? 'Livraisons'
+    $f$, tbl);
+  end loop;
+end $$;

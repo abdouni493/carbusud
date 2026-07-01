@@ -69,7 +69,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
       { label: "Cuves / Tanks",  icon: Gauge,        path: "/tanks",          moduleId: "Cuves" },
       { label: "Pompes",         icon: Wrench,       path: "/pumps",          moduleId: "Pompes" },
       { label: "Pistes",         icon: Map,          path: "/tracks",         moduleId: "Pistes" },
-      { label: "Achats Carburant", icon: ShoppingCart,path: "/fuel-purchases", moduleId: "Livraisons" },
+      { label: "Achats Carburant", icon: ShoppingCart,path: "/fuel-purchases", moduleId: "Achats Carburant" },
     ]
   },
   {
@@ -135,7 +135,7 @@ const WORKER_MODULE_NAV: Record<string, ModuleNavDef> = {
   "Cuves":             { label: "Cuves / Tanks",     icon: Gauge,        path: "/tanks",           group: "fuel" },
   "Pompes":            { label: "Pompes",            icon: Wrench,       path: "/pumps",           group: "fuel" },
   "Pistes":            { label: "Pistes",            icon: Map,          path: "/tracks",          group: "fuel" },
-  "Livraisons":        { label: "Achats Carburant",  icon: ShoppingCart, path: "/fuel-purchases",  group: "fuel" },
+  "Achats Carburant":  { label: "Achats Carburant",  icon: ShoppingCart, path: "/fuel-purchases",  group: "fuel" },
   // Magasin
   "Produits":          { label: "Produits",          icon: Package,      path: "/products",        group: "magasin" },
   "Achats":            { label: "Achats Magasin",    icon: ShoppingCart, path: "/purchases",       group: "magasin" },

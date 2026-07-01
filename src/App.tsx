@@ -55,7 +55,7 @@ const ROUTE_TO_MODULE: Record<string, string> = {
   "/pumps":            "Pompes",
   "/tracks":           "Pistes",
   "/delivery-notes":   "Livraisons",
-  "/fuel-purchases":   "Livraisons",
+  "/fuel-purchases":   "Achats Carburant",
   "/products":         "Produits",
   "/shop-pos":         "Magasin",
   "/purchases":        "Achats",
@@ -307,7 +307,7 @@ function AppRoutes({ onLogout }: { onLogout: () => void }) {
         <Route path="/pumps"            element={<ProtectedRoute element={<Pumps />} moduleId="Pompes" />} />
         <Route path="/tracks"           element={<ProtectedRoute element={<Tracks />} moduleId="Pistes" />} />
         <Route path="/delivery-notes"   element={<ProtectedRoute element={<DeliveryNotes />} moduleId="Livraisons" />} />
-        <Route path="/fuel-purchases"   element={<ProtectedRoute element={<FuelPurchases />} moduleId="Livraisons" />} />
+        <Route path="/fuel-purchases"   element={<ProtectedRoute element={<FuelPurchases />} moduleId="Achats Carburant" />} />
 
         {/* Magasin */}
         <Route path="/products"         element={<ProtectedRoute element={<Products />} moduleId="Produits" />} />

@@ -19,6 +19,11 @@ export interface ModuleDef {
   icon: React.ElementType;
   /** Sub-actions this interface supports (drives the buttons shown in the editor). */
   actions: ActionKey[];
+  /** Optional nested sub-interfaces — used when one sidebar entry actually opens
+   *  a page with several independently-permissioned tabs (e.g. "Achats Carburant"
+   *  → Bons de Livraison / Facturation / Paiements). Each child is a normal
+   *  ModuleDef with its own id/voir/actions in the flat UserPermissions map. */
+  children?: ModuleDef[];
 }
 
 export interface GroupDef {
@@ -64,7 +69,14 @@ export const GROUPS: GroupDef[] = [
       { id: "Cuves",      label: "Cuves",      icon: Gauge,         actions: ['creer', 'modifier', 'supprimer'] },
       { id: "Pompes",     label: "Pompes",     icon: Wrench,        actions: ['creer', 'modifier', 'supprimer'] },
       { id: "Pistes",     label: "Pistes",     icon: Map,           actions: ['creer', 'modifier', 'supprimer'] },
-      { id: "Livraisons", label: "Livraisons", icon: ClipboardList, actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+      {
+        id: "Achats Carburant", label: "Achats Carburant", icon: ShoppingCart, actions: [],
+        children: [
+          { id: "Achats Carburant:Bons de Livraison", label: "Bons de Livraison", icon: ClipboardList, actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+          { id: "Achats Carburant:Facturation",        label: "Facturation",       icon: FileText,       actions: ['creer', 'modifier', 'supprimer', 'imprimer'] },
+          { id: "Achats Carburant:Paiements",           label: "Paiements",         icon: CreditCard,     actions: ['creer', 'modifier', 'imprimer'] },
+        ],
+      },
     ],
   },
   {
@@ -109,8 +121,13 @@ export const GROUPS: GroupDef[] = [
   },
 ];
 
-/** Flat list of every module id → def, for quick lookups. */
-export const ALL_MODULES: ModuleDef[] = GROUPS.flatMap(g => g.modules);
+/** Recursively expands modules + their nested children into one flat list. */
+function flattenModules(mods: ModuleDef[]): ModuleDef[] {
+  return mods.flatMap(m => [m, ...(m.children ? flattenModules(m.children) : [])]);
+}
+
+/** Flat list of every module id → def (including nested children), for quick lookups. */
+export const ALL_MODULES: ModuleDef[] = GROUPS.flatMap(g => flattenModules(g.modules));
 export const MODULE_BY_ID: Record<string, ModuleDef> = Object.fromEntries(
   ALL_MODULES.map(m => [m.id, m])
 );
@@ -143,8 +160,8 @@ export function getDefaultPermissions(
   role: 'pompiste' | 'chef_brigade' | 'gerant' | 'magasin'
 ): UserPermissions {
   const perms: UserPermissions = {};
-  // Start with everything OFF
-  GROUPS.forEach(g => g.modules.forEach(m => { perms[m.id] = { ...emptyPermission }; }));
+  // Start with everything OFF (including nested sub-interfaces like Achats Carburant's tabs)
+  ALL_MODULES.forEach(m => { perms[m.id] = { ...emptyPermission }; });
 
   if (role === 'pompiste') {
     // Dashboard: view only — shows his brigade info + payment info
@@ -180,9 +197,7 @@ export function getDefaultPermissions(
 
   else if (role === 'gerant') {
     // Gérant sees everything EXCEPT reports and statistics
-    GROUPS.forEach(g => g.modules.forEach(m => {
-      perms[m.id] = { ...viewOnlyPermission };
-    }));
+    ALL_MODULES.forEach(m => { perms[m.id] = { ...viewOnlyPermission }; });
     // Give full access to operational modules
     // Brigades: gérant reviews/consults but never creates, edits or deletes (destructive/cascading operation)
     perms["Brigades"]          = { voir: true, creer: false, modifier: false, supprimer: false, imprimer: true, exporter: false, scanner: false, generer: false };
@@ -191,7 +206,10 @@ export function getDefaultPermissions(
     perms["Cuves"]             = { ...viewOnlyPermission };
     perms["Pompes"]            = { ...viewOnlyPermission };
     perms["Pistes"]            = { ...viewOnlyPermission };
-    perms["Livraisons"]        = { ...fullPermission };
+    perms["Achats Carburant"]                     = { ...fullPermission };
+    perms["Achats Carburant:Bons de Livraison"]   = { ...fullPermission };
+    perms["Achats Carburant:Facturation"]         = { ...fullPermission };
+    perms["Achats Carburant:Paiements"]           = { ...fullPermission };
     perms["Produits"]          = { ...fullPermission };
     perms["Achats"]            = { ...fullPermission };
     perms["Inventaires"]       = { ...fullPermission };

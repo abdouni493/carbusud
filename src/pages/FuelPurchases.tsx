@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ClipboardList, FileText, CreditCard, Plus, Search, Eye, Edit2, Trash2, X,
@@ -27,42 +27,66 @@ const blLiters = (bl: DeliveryNote) => blItems(bl).reduce((a, i) => a + i.liters
 // ─── Main container ─────────────────────────────────────────────────────────
 
 const FuelPurchases = () => {
+  const permBL    = useModulePermission('Achats Carburant:Bons de Livraison');
+  const permFact  = useModulePermission('Achats Carburant:Facturation');
+  const permPaie  = useModulePermission('Achats Carburant:Paiements');
+
+  const tabs = useMemo(() => ([
+    { id: "bons" as const,         label: "Bons de Livraison", icon: ClipboardList },
+    { id: "facturation" as const,  label: "Facturation",       icon: FileText },
+    { id: "paiements" as const,    label: "Paiements",         icon: CreditCard },
+  ].filter(t =>
+    t.id === "bons" ? permBL.voir : t.id === "facturation" ? permFact.voir : permPaie.voir
+  )), [permBL.voir, permFact.voir, permPaie.voir]);
+
   const [activeTab, setActiveTab] = useState<"bons" | "facturation" | "paiements">("bons");
 
-  const tabs = [
-    { id: "bons" as const, label: "Bons de Livraison", icon: ClipboardList },
-    { id: "facturation" as const, label: "Facturation", icon: FileText },
-    { id: "paiements" as const, label: "Paiements", icon: CreditCard },
-  ];
+  // Land on the first tab the worker can actually see, and follow along if
+  // permissions change (e.g. admin revokes the currently-open tab).
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.some(t => t.id === activeTab)) {
+      setActiveTab(tabs[0].id);
+    }
+  }, [tabs, activeTab]);
 
   return (
     <div className="space-y-8 max-w-[1600px] mx-auto pb-12 text-left">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h1 className="text-3xl font-black text-[#003087] uppercase tracking-tighter leading-none">Achats Carburant</h1>
-        <div className="flex gap-2 bg-white p-1.5 rounded-2xl shadow-lg border border-slate-100">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all",
-                  active ? "shadow-md" : "text-slate-500 hover:bg-slate-50"
-                )}
-                style={active ? { backgroundColor: NAVY, color: GOLD } : undefined}
-              >
-                <Icon className="w-4 h-4" /> {tab.label}
-              </button>
-            );
-          })}
-        </div>
+        {tabs.length > 0 && (
+          <div className="flex gap-2 bg-white p-1.5 rounded-2xl shadow-lg border border-slate-100">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all",
+                    active ? "shadow-md" : "text-slate-500 hover:bg-slate-50"
+                  )}
+                  style={active ? { backgroundColor: NAVY, color: GOLD } : undefined}
+                >
+                  <Icon className="w-4 h-4" /> {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {activeTab === "bons" && <BonsLivraisonTab />}
-      {activeTab === "facturation" && <FacturationTab />}
-      {activeTab === "paiements" && <PaiementsTab />}
+      {tabs.length === 0 ? (
+        <div className="p-12 text-center text-slate-400 font-black uppercase tracking-widest text-xs bg-white rounded-3xl border border-slate-100">
+          Aucun accès accordé pour ce module.
+        </div>
+      ) : (
+        <>
+          {activeTab === "bons" && permBL.voir && <BonsLivraisonTab />}
+          {activeTab === "facturation" && permFact.voir && <FacturationTab />}
+          {activeTab === "paiements" && permPaie.voir && <PaiementsTab />}
+        </>
+      )}
     </div>
   );
 };
@@ -80,7 +104,7 @@ interface BLFormItem {
 
 const BonsLivraisonTab = () => {
   const { deliveryNotes, suppliers, tanks, drivers, settings } = useAppState();
-  const perm = useModulePermission('Livraisons');
+  const perm = useModulePermission('Achats Carburant:Bons de Livraison');
   const dispatch = useAppDispatch();
 
   // Default purchase price (DA/L) for a tank, from Settings → fuelBuyPrices by fuel type
@@ -662,7 +686,7 @@ const BonsLivraisonTab = () => {
 
 const FacturationTab = () => {
   const { fuelInvoices, deliveryNotes, suppliers, tanks } = useAppState();
-  const perm = useModulePermission('Livraisons');
+  const perm = useModulePermission('Achats Carburant:Facturation');
   const dispatch = useAppDispatch();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -1105,7 +1129,7 @@ const FacturationTab = () => {
 
 const PaiementsTab = () => {
   const { fuelReceipts, fuelInvoices } = useAppState();
-  const perm = useModulePermission('Livraisons');
+  const perm = useModulePermission('Achats Carburant:Paiements');
   const dispatch = useAppDispatch();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
