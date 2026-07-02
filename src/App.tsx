@@ -40,7 +40,6 @@ import MyBrigade from "./pages/MyBrigade";
 import MyPayments from "./pages/MyPayments";
 import MySettings from "./pages/MySettings";
 import ChefBrigade from "./pages/ChefBrigade";
-import Planning from "./pages/Planning";
 
 // ─── Route to Module Mapping ───────────────────────────────────────────────────
 /**
@@ -49,7 +48,6 @@ import Planning from "./pages/Planning";
  */
 const ROUTE_TO_MODULE: Record<string, string> = {
   "/brigades":         "Brigades",
-  "/planning":          "Brigades",
   "/fuel-sales":       "Ventes Carburant",
   "/tanks":            "Cuves",
   "/pumps":            "Pompes",
@@ -296,9 +294,7 @@ function AppRoutes({ onLogout }: { onLogout: () => void }) {
       <Routes>
         <Route path="/dashboard"        element={<Dashboard />} />
 
-        {/* Operations */}
         <Route path="/brigades"         element={<ProtectedRoute element={<Brigades />} moduleId="Brigades" />} />
-        <Route path="/planning"         element={<ProtectedRoute element={<Planning />} moduleId="Brigades" />} />
         <Route path="/fuel-sales"       element={<ProtectedRoute element={<FuelPOS />} moduleId="Ventes Carburant" />} />
         <Route path="/pos"              element={<Navigate to="/fuel-sales" replace />} />
 

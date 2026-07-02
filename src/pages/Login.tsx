@@ -20,7 +20,7 @@ interface LoginProps {
 const features = [
   { icon: Zap,       title: "Temps Réel",    desc: "Suivi instantané des ventes & stocks" },
   { icon: BarChart3, title: "Analytique",    desc: "Rapports et statistiques avancées" },
-  { icon: Clock,     title: "Multi-Brigades",desc: "Gestion des équipes et planning" },
+  { icon: Clock,     title: "Multi-Brigades",desc: "Gestion des équipes" },
 ];
 
 // ─── Main Component ───────────────────────────────────────────────────────────

@@ -59,7 +59,6 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
     id: "ops", label: "Opérations",
     items: [
       { label: "Brigades",        icon: Target,       path: "/brigades",  moduleId: "Brigades" },
-      { label: "Planning",        icon: Calendar,     path: "/planning", moduleId: "Brigades" },
       { label: "Vente Magasin",   icon: Store,         path: "/shop-pos",  moduleId: "Magasin" },
     ]
   },
@@ -128,7 +127,6 @@ const WORKER_MODULE_NAV: Record<string, ModuleNavDef> = {
   // Opérations
   "Ma Brigade":        { label: "Ma Brigade",        icon: Target,       path: "/my-brigade",      group: "ops" },
   "Brigades":          { label: "Brigades",          icon: Target,       path: "/brigades",        group: "ops" },
-  "Planning":          { label: "Planning",          icon: Calendar,     path: "/planning",        group: "ops" },
   "Ventes Carburant":  { label: "Ventes Carburant",  icon: Fuel,         path: "/fuel-sales",      group: "ops" },
   "Magasin":           { label: "Vente Magasin",     icon: Store,        path: "/shop-pos",        group: "ops" },
   // Carburant

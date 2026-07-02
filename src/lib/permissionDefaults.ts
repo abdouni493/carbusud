@@ -58,7 +58,6 @@ export const GROUPS: GroupDef[] = [
     modules: [
       { id: "Brigades",         label: "Brigades",         icon: Target,   actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'generer'] },
       { id: "Ma Brigade",       label: "Ma Brigade",       icon: Target,   actions: ['imprimer'] },
-      { id: "Planning",         label: "Planning",         icon: Calendar, actions: ['creer', 'modifier', 'supprimer'] },
       { id: "Ventes Carburant", label: "Ventes Carburant", icon: Fuel,     actions: ['creer', 'imprimer', 'scanner'] },
       { id: "Magasin",          label: "Vente Magasin",    icon: Store,    actions: ['creer', 'modifier', 'supprimer', 'imprimer', 'scanner'] },
     ],
