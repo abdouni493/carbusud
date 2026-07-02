@@ -133,11 +133,28 @@ const Pompistes = () => {
       }
     }
 
-    if (selectedPompiste) {
-      dispatch({ type: 'UPDATE_POMPISTE', payload: { ...selectedPompiste, ...form } as Pompiste });
+    let finalAuthUserId = selectedPompiste?.authUserId;
+    let finalHasAccess = !!form.hasAccess;
 
-      // Update password in auth if a new password was entered
-      if (form.hasAccess && form.username && form.password) {
+    if (selectedPompiste) {
+      if (form.hasAccess && !selectedPompiste.authUserId && form.username && form.password) {
+        const result = await provisionWorkerAccount({
+          action: 'create',
+          workerType: 'pompiste',
+          workerId: selectedPompiste.id,
+          username: form.username,
+          password: form.password,
+          name: form.name,
+          email: form.email,
+        });
+        if (result.ok) {
+          finalAuthUserId = result.auth_user_id;
+        } else {
+          finalHasAccess = false;
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
+      else if (form.hasAccess && selectedPompiste.authUserId && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'update_password',
           workerType: 'pompiste',
@@ -147,47 +164,57 @@ const Pompistes = () => {
           email: form.email,
         });
         if (!result.ok) {
-          const msg = (result as { ok: false; error: string }).error;
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${msg}` } });
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
+      else if (!form.hasAccess && selectedPompiste.authUserId) {
+        const result = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'pompiste',
+          workerId: selectedPompiste.id,
+        });
+        if (result.ok) {
+          finalAuthUserId = undefined;
+        } else {
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non supprimé: ${(result as {ok:false;error:string}).error}` } });
         }
       }
 
+      dispatch({ type: 'UPDATE_POMPISTE', payload: { ...selectedPompiste, ...form, hasAccess: finalHasAccess, authUserId: finalAuthUserId } as Pompiste });
       dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste mis à jour" } });
     } else {
-      const newPompiste: Pompiste = {
-        ...form as Pompiste,
-        id: newId(),
-        paymentRecord: [],
-        acomptes: [],
-        absences: [],
-        permissions: emptyPermissions(),
-      };
-      dispatch({ type: 'ADD_POMPISTE', payload: newPompiste });
+      const newPompisteId = newId();
 
-      // Provision Supabase auth account if access is enabled
       if (form.hasAccess && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'create',
           workerType: 'pompiste',
-          workerId: newPompiste.id,
+          workerId: newPompisteId,
           username: form.username,
           password: form.password,
           name: form.name,
           email: form.email,
         });
         if (result.ok) {
-          if (result.auth_user_id) {
-            dispatch({ type: 'UPDATE_POMPISTE', payload: { ...newPompiste, authUserId: result.auth_user_id } });
-          }
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste recruté" } });
+          finalAuthUserId = result.auth_user_id;
         } else {
-          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
-          dispatch({ type: 'UPDATE_POMPISTE', payload: { ...newPompiste, hasAccess: false } });
+          finalHasAccess = false;
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
-      } else {
-        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste recruté" } });
       }
+
+      const newPompiste: Pompiste = {
+        ...form as Pompiste,
+        id: newPompisteId,
+        hasAccess: finalHasAccess,
+        authUserId: finalAuthUserId,
+        paymentRecord: [],
+        acomptes: [],
+        absences: [],
+        permissions: emptyPermissions(),
+      };
+      dispatch({ type: 'ADD_POMPISTE', payload: newPompiste });
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Pompiste recruté" } });
     }
     setShowModal(false);
   };

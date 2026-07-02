@@ -381,10 +381,28 @@ const BrigadeChefs = () => {
       }
     }
 
-    if (selectedChef) {
-      dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...selectedChef, ...form } as BrigadeChef });
+    let finalAuthUserId = selectedChef?.authUserId;
+    let finalHasAccess = !!form.hasAccess;
 
-      if (hasAccess && form.username && form.password) {
+    if (selectedChef) {
+      if (hasAccess && !selectedChef.authUserId && form.username && form.password) {
+        const result = await provisionWorkerAccount({
+          action: 'create',
+          workerType: 'chef_brigade',
+          workerId: selectedChef.id,
+          username: form.username,
+          password: form.password,
+          name: form.name,
+          email: form.email,
+        });
+        if (result.ok) {
+          finalAuthUserId = result.auth_user_id;
+        } else {
+          finalHasAccess = false;
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
+      else if (hasAccess && selectedChef.authUserId && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'update_password',
           workerType: 'chef_brigade',
@@ -397,42 +415,54 @@ const BrigadeChefs = () => {
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
         }
       }
+      else if (!hasAccess && selectedChef.authUserId) {
+        const result = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'chef_brigade',
+          workerId: selectedChef.id,
+        });
+        if (result.ok) {
+          finalAuthUserId = undefined;
+        } else {
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non supprimé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
 
+      dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...selectedChef, ...form, hasAccess: finalHasAccess, authUserId: finalAuthUserId } as BrigadeChef });
       dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade mis à jour" } });
     } else {
-      const newChef: BrigadeChef = {
-        ...form as BrigadeChef,
-        id: newId(),
-        acomptes: [],
-        absences: [],
-        paymentRecord: [],
-        permissions: emptyPermissions(),
-      };
-      dispatch({ type: 'ADD_BRIGADE_CHEF', payload: newChef });
+      const newChefId = newId();
 
       if (hasAccess && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'create',
           workerType: 'chef_brigade',
-          workerId: newChef.id,
+          workerId: newChefId,
           username: form.username,
           password: form.password,
           name: form.name,
           email: form.email,
         });
         if (result.ok) {
-          if (result.auth_user_id) {
-            dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...newChef, authUserId: result.auth_user_id } });
-          }
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade recruté" } });
+          finalAuthUserId = result.auth_user_id;
         } else {
-          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
-          dispatch({ type: 'UPDATE_BRIGADE_CHEF', payload: { ...newChef, hasAccess: false } });
+          finalHasAccess = false;
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
-      } else {
-        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade recruté" } });
       }
+
+      const newChef: BrigadeChef = {
+        ...form as BrigadeChef,
+        id: newChefId,
+        hasAccess: finalHasAccess,
+        authUserId: finalAuthUserId,
+        acomptes: [],
+        absences: [],
+        paymentRecord: [],
+        permissions: emptyPermissions(),
+      };
+      dispatch({ type: 'ADD_BRIGADE_CHEF', payload: newChef });
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Chef de brigade recruté" } });
     }
     setShowModal(false);
     resetForm();

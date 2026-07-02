@@ -132,10 +132,28 @@ const Gerants = () => {
       }
     }
 
-    if (selectedGerant) {
-      dispatch({ type: 'UPDATE_GERANT', payload: { ...selectedGerant, ...form } as Gerant });
+    let finalAuthUserId = selectedGerant?.authUserId;
+    let finalHasAccess = !!form.hasAccess;
 
-      if (form.hasAccess && form.username && form.password) {
+    if (selectedGerant) {
+      if (form.hasAccess && !selectedGerant.authUserId && form.username && form.password) {
+        const result = await provisionWorkerAccount({
+          action: 'create',
+          workerType: 'gerant',
+          workerId: selectedGerant.id,
+          username: form.username,
+          password: form.password,
+          name: form.name,
+          email: form.email,
+        });
+        if (result.ok) {
+          finalAuthUserId = result.auth_user_id;
+        } else {
+          finalHasAccess = false;
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
+      else if (form.hasAccess && selectedGerant.authUserId && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'update_password',
           workerType: 'gerant',
@@ -148,42 +166,54 @@ const Gerants = () => {
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
         }
       }
+      else if (!form.hasAccess && selectedGerant.authUserId) {
+        const result = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'gerant',
+          workerId: selectedGerant.id,
+        });
+        if (result.ok) {
+          finalAuthUserId = undefined;
+        } else {
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non supprimé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
 
+      dispatch({ type: 'UPDATE_GERANT', payload: { ...selectedGerant, ...form, hasAccess: finalHasAccess, authUserId: finalAuthUserId } as Gerant });
       dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant mis à jour" } });
     } else {
-      const newGerant: Gerant = {
-        ...form as Gerant,
-        id: newId(),
-        paymentRecord: [],
-        acomptes: [],
-        absences: [],
-        permissions: emptyPermissions(),
-      };
-      dispatch({ type: 'ADD_GERANT', payload: newGerant });
+      const newGerantId = newId();
 
       if (form.hasAccess && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'create',
           workerType: 'gerant',
-          workerId: newGerant.id,
+          workerId: newGerantId,
           username: form.username,
           password: form.password,
           name: form.name,
           email: form.email,
         });
         if (result.ok) {
-          if (result.auth_user_id) {
-            dispatch({ type: 'UPDATE_GERANT', payload: { ...newGerant, authUserId: result.auth_user_id } });
-          }
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant recruté" } });
+          finalAuthUserId = result.auth_user_id;
         } else {
-          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
-          dispatch({ type: 'UPDATE_GERANT', payload: { ...newGerant, hasAccess: false } });
+          finalHasAccess = false;
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
-      } else {
-        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant recruté" } });
       }
+
+      const newGerant: Gerant = {
+        ...form as Gerant,
+        id: newGerantId,
+        hasAccess: finalHasAccess,
+        authUserId: finalAuthUserId,
+        paymentRecord: [],
+        acomptes: [],
+        absences: [],
+        permissions: emptyPermissions(),
+      };
+      dispatch({ type: 'ADD_GERANT', payload: newGerant });
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Gérant recruté" } });
     }
     setShowModal(false);
   };

@@ -146,10 +146,28 @@ const MagasinWorkers = () => {
       }
     }
 
-    if (selectedWorker) {
-      dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...selectedWorker, ...form } as MagasinWorker });
+    let finalAuthUserId = selectedWorker?.authUserId;
+    let finalHasAccess = !!form.hasAccess;
 
-      if (form.hasAccess && form.username && form.password) {
+    if (selectedWorker) {
+      if (form.hasAccess && !selectedWorker.authUserId && form.username && form.password) {
+        const result = await provisionWorkerAccount({
+          action: 'create',
+          workerType: 'magasin',
+          workerId: selectedWorker.id,
+          username: form.username,
+          password: form.password,
+          name: form.name,
+          email: form.email,
+        });
+        if (result.ok) {
+          finalAuthUserId = result.auth_user_id;
+        } else {
+          finalHasAccess = false;
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
+      else if (form.hasAccess && selectedWorker.authUserId && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'update_password',
           workerType: 'magasin',
@@ -162,42 +180,54 @@ const MagasinWorkers = () => {
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Mot de passe non mis à jour: ${(result as {ok:false;error:string}).error}` } });
         }
       }
+      else if (!form.hasAccess && selectedWorker.authUserId) {
+        const result = await provisionWorkerAccount({
+          action: 'delete',
+          workerType: 'magasin',
+          workerId: selectedWorker.id,
+        });
+        if (result.ok) {
+          finalAuthUserId = undefined;
+        } else {
+          dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non supprimé: ${(result as {ok:false;error:string}).error}` } });
+        }
+      }
 
+      dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...selectedWorker, ...form, hasAccess: finalHasAccess, authUserId: finalAuthUserId } as MagasinWorker });
       dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé mis à jour" } });
     } else {
-      const newWorker: MagasinWorker = {
-        ...form as MagasinWorker,
-        id: newId(),
-        paymentRecord: [],
-        acomptes: [],
-        absences: [],
-        permissions: emptyPermissions(),
-      };
-      dispatch({ type: 'ADD_MAGASIN_WORKER', payload: newWorker });
+      const newWorkerId = newId();
 
       if (form.hasAccess && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'create',
           workerType: 'magasin',
-          workerId: newWorker.id,
+          workerId: newWorkerId,
           username: form.username,
           password: form.password,
           name: form.name,
           email: form.email,
         });
         if (result.ok) {
-          if (result.auth_user_id) {
-            dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...newWorker, authUserId: result.auth_user_id } });
-          }
-          dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé magasin recruté" } });
+          finalAuthUserId = result.auth_user_id;
         } else {
-          // Revert hasAccess to false: avoid a worker flagged "with access" but with no auth account
-          dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...newWorker, hasAccess: false } });
+          finalHasAccess = false;
           dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: `Compte d'accès non créé: ${(result as {ok:false;error:string}).error}` } });
         }
-      } else {
-        dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé magasin recruté" } });
       }
+
+      const newWorker: MagasinWorker = {
+        ...form as MagasinWorker,
+        id: newWorkerId,
+        hasAccess: finalHasAccess,
+        authUserId: finalAuthUserId,
+        paymentRecord: [],
+        acomptes: [],
+        absences: [],
+        permissions: emptyPermissions(),
+      };
+      dispatch({ type: 'ADD_MAGASIN_WORKER', payload: newWorker });
+      dispatch({ type: 'ADD_TOAST', payload: { type: 'success', message: "Employé magasin recruté" } });
     }
     setShowModal(false);
   };
