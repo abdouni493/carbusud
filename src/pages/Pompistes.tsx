@@ -23,7 +23,7 @@ const USERNAME_REGEX = /^[a-z0-9._-]{3,32}$/;
 const Pompistes = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { pompistes, tracks, brigadeChefs, fuelSales, settings } = useAppState();
+  const { pompistes, tracks, brigadeChefs, fuelSales, settings, currentUserRole } = useAppState();
   const perm = useModulePermission('Pompistes');
   const dispatch = useAppDispatch();
 
@@ -464,9 +464,11 @@ const Pompistes = () => {
                       <button onClick={() => { setSelectedPompiste(p); setShowHistoryModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <HistoryIcon className="w-4 h-4 text-purple-500" /> Historique
                       </button>
-                      <button onClick={() => { setSelectedPompiste(p); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
-                        <Shield className="w-4 h-4 text-red-500" /> Permissions
-                      </button>
+                      {currentUserRole === 'admin' && (
+                        <button onClick={() => { setSelectedPompiste(p); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+                          <Shield className="w-4 h-4 text-red-500" /> Permissions
+                        </button>
+                      )}
                       {perm.supprimer && (
                       <button onClick={() => { setSelectedPompiste(p); setShowConfirmDelete(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                         <Trash2 className="w-4 h-4" /> Supprimer

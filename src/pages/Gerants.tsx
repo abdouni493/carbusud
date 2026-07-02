@@ -26,7 +26,7 @@ type Gerant = GerantWorker;
 const Gerants = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { gerants, tracks, brigadeChefs, fuelSales, settings } = useAppState();
+  const { gerants, tracks, brigadeChefs, fuelSales, settings, currentUserRole } = useAppState();
   const perm = useModulePermission('Gérants');
   const dispatch = useAppDispatch();
 
@@ -460,9 +460,11 @@ const Gerants = () => {
                       <button onClick={() => { setSelectedGerant(g); setShowHistoryModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <HistoryIcon className="w-4 h-4 text-purple-500" /> Historique
                       </button>
-                      <button onClick={() => { setSelectedGerant(g); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
-                        <Shield className="w-4 h-4 text-red-500" /> Permissions
-                      </button>
+                      {currentUserRole === 'admin' && (
+                        <button onClick={() => { setSelectedGerant(g); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+                          <Shield className="w-4 h-4 text-red-500" /> Permissions
+                        </button>
+                      )}
                       {perm.supprimer && (
                       <button onClick={() => { setSelectedGerant(g); setShowConfirmDelete(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                         <Trash2 className="w-4 h-4" /> Supprimer
@@ -605,12 +607,12 @@ const Gerants = () => {
                         <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Autoriser la connexion</p>
                       </div>
                     </div>
-                    <button type="button" onClick={() => setForm({...form, systemAccess: !form.systemAccess})} className={cn("w-12 h-6 rounded-full transition-colors relative shadow-inner", form.systemAccess ? "bg-green-500" : "bg-slate-300")}>
-                      <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm", form.systemAccess ? "left-7" : "left-1")} />
+                    <button type="button" onClick={() => setForm({...form, hasAccess: !form.hasAccess})} className={cn("w-12 h-6 rounded-full transition-colors relative shadow-inner", form.hasAccess ? "bg-green-500" : "bg-slate-300")}>
+                      <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm", form.hasAccess ? "left-7" : "left-1")} />
                     </button>
                   </div>
                   <AnimatePresence>
-                    {form.systemAccess && (
+                    {form.hasAccess && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                         <div className="grid grid-cols-2 gap-4 pt-4 border-t border-[#002d87]/10">
                           <div className="space-y-2">
@@ -709,9 +711,11 @@ const Gerants = () => {
                       <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Embauche</p>
                       <p className="font-black text-[#002d87] text-sm">{selectedGerant.hireDate || 'N/A'}</p>
                     </div>
-                    <div className="p-5 bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl border border-green-100">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2\">Accès</p>
-                      <p className="font-black text-green-600 text-sm\">Actif</p>
+                    <div className={cn("p-5 bg-gradient-to-br rounded-2xl border", selectedGerant.hasAccess ? "from-green-50 to-emerald-50 border-green-100" : "from-red-50 to-rose-50 border-red-100")}>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Accès</p>
+                      <p className={cn("font-black text-sm", selectedGerant.hasAccess ? "text-green-600" : "text-red-500")}>
+                        {selectedGerant.hasAccess ? "Actif" : "Inactif"}
+                      </p>
                     </div>
                   </div>
                 </div>

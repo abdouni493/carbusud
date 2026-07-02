@@ -38,7 +38,7 @@ const USERNAME_REGEX = /^[a-z0-9._-]{3,32}$/;
 const MagasinWorkers = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { magasinWorkers: workers, tracks, brigadeChefs, fuelSales, settings } = useAppState();
+  const { magasinWorkers: workers, tracks, brigadeChefs, fuelSales, settings, currentUserRole } = useAppState();
   const perm = useModulePermission('Employés Magasin');
   const dispatch = useAppDispatch();
 
@@ -78,10 +78,7 @@ const MagasinWorkers = () => {
   const [absenceForm, setAbsenceForm] = useState({ cost: 0, date: new Date().toISOString().split('T')[0], description: "" });
   const [paymentForm, setPaymentForm] = useState({ month: "", mode: 'Espèces', chequeNumber: "", notes: "" });
 
-  // Accès application (login)
-  const [appAccessEnabled, setAppAccessEnabled] = useState(false);
-  const [appUsername, setAppUsername] = useState("");
-  const [appPassword, setAppPassword] = useState("");
+
   const [historyTab, setHistoryTab] = useState<'acomptes' | 'absences' | 'paiements'>('acomptes');
   const [permissionsTab, setPermissionsTab] = useState<Record<string, Record<string, boolean>>>({});
 
@@ -134,32 +131,31 @@ const MagasinWorkers = () => {
       return;
     }
 
-    // appAccessEnabled / appUsername / appPassword are separate state (not on `form`)
-    if (appAccessEnabled) {
-      if (!appUsername) {
+    if (form.hasAccess) {
+      if (!form.username) {
         dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: "Nom d'utilisateur requis pour l'accès application" } });
         return;
       }
-      if (!USERNAME_REGEX.test(appUsername)) {
+      if (!USERNAME_REGEX.test(form.username)) {
         dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: "Identifiant invalide (3-32 caractères, minuscules, chiffres, . _ -)" } });
         return;
       }
-      if (!selectedWorker && !appPassword) {
+      if (!selectedWorker && !form.password) {
         dispatch({ type: 'ADD_TOAST', payload: { type: 'error', message: "Mot de passe requis pour créer le compte d'accès" } });
         return;
       }
     }
 
     if (selectedWorker) {
-      dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...selectedWorker, ...form, hasAccess: appAccessEnabled, username: appUsername || selectedWorker.username } as MagasinWorker });
+      dispatch({ type: 'UPDATE_MAGASIN_WORKER', payload: { ...selectedWorker, ...form } as MagasinWorker });
 
-      if (appAccessEnabled && appUsername && appPassword) {
+      if (form.hasAccess && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'update_password',
           workerType: 'magasin',
           workerId: selectedWorker.id,
-          username: appUsername,
-          password: appPassword,
+          username: form.username,
+          password: form.password,
           email: form.email,
         });
         if (!result.ok) {
@@ -172,8 +168,6 @@ const MagasinWorkers = () => {
       const newWorker: MagasinWorker = {
         ...form as MagasinWorker,
         id: newId(),
-        hasAccess: appAccessEnabled,
-        username: appUsername || undefined,
         paymentRecord: [],
         acomptes: [],
         absences: [],
@@ -181,13 +175,13 @@ const MagasinWorkers = () => {
       };
       dispatch({ type: 'ADD_MAGASIN_WORKER', payload: newWorker });
 
-      if (appAccessEnabled && appUsername && appPassword) {
+      if (form.hasAccess && form.username && form.password) {
         const result = await provisionWorkerAccount({
           action: 'create',
           workerType: 'magasin',
           workerId: newWorker.id,
-          username: appUsername,
-          password: appPassword,
+          username: form.username,
+          password: form.password,
           name: form.name,
           email: form.email,
         });
@@ -479,9 +473,11 @@ const MagasinWorkers = () => {
                       <button onClick={() => { setSelectedWorker(w); setShowHistoryModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                         <HistoryIcon className="w-4 h-4 text-purple-500" /> Historique
                       </button>
-                      <button onClick={() => { setSelectedWorker(w); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
-                        <Shield className="w-4 h-4 text-red-500" /> Permissions
-                      </button>
+                      {currentUserRole === 'admin' && (
+                        <button onClick={() => { setSelectedWorker(w); setShowPermissionsModal(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+                          <Shield className="w-4 h-4 text-red-500" /> Permissions
+                        </button>
+                      )}
                       {perm.supprimer && (
                       <button onClick={() => { setSelectedWorker(w); setShowConfirmDelete(true); setActionMenuOpen(null); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                         <Trash2 className="w-4 h-4" /> Supprimer
@@ -624,22 +620,22 @@ const MagasinWorkers = () => {
                          <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Autoriser la connexion</p>
                        </div>
                      </div>
-                     <button type="button" onClick={() => setAppAccessEnabled(v => !v)} className={cn("w-12 h-6 rounded-full transition-colors relative shadow-inner", appAccessEnabled ? "bg-green-500" : "bg-slate-300")}>
-                        <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm", appAccessEnabled ? "left-7" : "left-1")} />
+                     <button type="button" onClick={() => setForm({...form, hasAccess: !form.hasAccess})} className={cn("w-12 h-6 rounded-full transition-colors relative shadow-inner", form.hasAccess ? "bg-green-500" : "bg-slate-300")}>
+                        <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm", form.hasAccess ? "left-7" : "left-1")} />
                      </button>
                    </div>
                    
                    <AnimatePresence>
-                     {appAccessEnabled && (
+                     {form.hasAccess && (
                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-blue-200">
                             <div className="space-y-2">
                               <label className="text-[9px] font-bold text-slate-400 uppercase ml-1 italic">Nom d'utilisateur</label>
-                              <input type="text" className="input-field italic font-black text-xs bg-white" placeholder="Identifiant unique" value={appUsername} onChange={e => setAppUsername(e.target.value)} />
+                              <input type="text" className="input-field italic font-black text-xs bg-white" placeholder="Identifiant unique" value={form.username || ''} onChange={e => setForm({...form, username: e.target.value})} />
                             </div>
                             <div className="space-y-2">
                               <label className="text-[9px] font-bold text-slate-400 uppercase ml-1 italic">Mot de passe</label>
-                              <input type="password" className="input-field italic font-black text-xs bg-white" placeholder="Mot de passe" value={appPassword} onChange={e => setAppPassword(e.target.value)} />
+                              <input type="password" className="input-field italic font-black text-xs bg-white" placeholder="Mot de passe" value={form.password || ''} onChange={e => setForm({...form, password: e.target.value})} />
                             </div>
                          </div>
                        </motion.div>

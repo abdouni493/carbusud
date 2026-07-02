@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { Navigate } from "react-router-dom";
 import {
   Shield, Plus, X, Save, Trash2, Edit2, Layers, Sparkles, Users,
 } from "lucide-react";
@@ -30,8 +31,12 @@ const countGranted = (perms: UserPermissions) =>
   GROUPS.reduce((n, g) => n + g.modules.filter(m => perms[m.id]?.voir).length, 0);
 
 const Permissions = () => {
-  const { permissionTemplates } = useAppState();
+  const { permissionTemplates, currentUserRole } = useAppState();
   const dispatch = useAppDispatch();
+
+  if (currentUserRole !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const [showEditor, setShowEditor] = useState(false);
   const [editing, setEditing] = useState<PermissionTemplate | null>(null);

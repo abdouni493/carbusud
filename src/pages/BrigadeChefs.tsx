@@ -88,6 +88,7 @@ const ChefCard: React.FC<ChefCardProps> = ({
 }) => {
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const perm = useModulePermission('Chefs de Brigade');
+  const { currentUserRole } = useAppState();
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentMonthAcomptes = (chef.acomptes || []).filter(a => !a.isPaid && a.date.startsWith(currentMonth)).reduce((sum, a) => sum + a.amount, 0);
   const isMonthPaid = (chef.paymentRecord || []).some(pr => pr.month === currentMonth && pr.isPaid);
@@ -158,9 +159,11 @@ const ChefCard: React.FC<ChefCardProps> = ({
                   <button onClick={() => { onHistory(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
                     <HistoryIcon className="w-4 h-4 text-purple-500" /> Historique
                   </button>
-                  <button onClick={() => { onPermissions(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
-                    <Shield className="w-4 h-4 text-red-500" /> Permissions
-                  </button>
+                  {currentUserRole === 'admin' && (
+                    <button onClick={() => { onPermissions(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-3 transition-colors">
+                      <Shield className="w-4 h-4 text-red-500" /> Permissions
+                    </button>
+                  )}
                   {perm.supprimer && (
                   <button onClick={() => { onDelete(); setActionMenuOpen(false); }} className="w-full px-4 py-3 text-left text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors">
                     <Trash2 className="w-4 h-4" /> Supprimer
@@ -915,7 +918,7 @@ const BrigadeChefs = () => {
                         <div className="p-5 bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl border border-slate-200">
                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Accès Logiciel</p>
                           <p className="font-black text-[#002d87] text-sm flex items-center gap-2">
-                            <Lock className="w-4 h-4" /> {selectedChef.systemAccess ? 'Actif' : 'Inactif'}
+                            <Lock className="w-4 h-4" /> {selectedChef.hasAccess ? 'Actif' : 'Inactif'}
                           </p>
                         </div>
                       </div>
@@ -1029,8 +1032,8 @@ const BrigadeChefs = () => {
                       <p className="text-[9px] font-black text-[#002d87] uppercase tracking-widest mb-2">Accès Système</p>
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-slate-700">Accès Application</span>
-                        <span className={cn("text-[9px] font-black uppercase px-3 py-1 rounded-full", selectedChef.systemAccess ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
-                          {selectedChef.systemAccess ? "Actif" : "Inactif"}
+                        <span className={cn("text-[9px] font-black uppercase px-3 py-1 rounded-full", selectedChef.hasAccess ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
+                          {selectedChef.hasAccess ? "Actif" : "Inactif"}
                         </span>
                       </div>
                     </div>
