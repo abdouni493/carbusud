@@ -39,6 +39,13 @@ export function useAuth() {
   // Prevent state updates after the component unmounts
   const mountedRef = useRef(true);
   const profileFetchRef = useRef<Promise<void> | null>(null);
+  // Always-current snapshot of `auth`, so the onAuthStateChange listener
+  // (registered once, see the empty dependency array below) can read the
+  // latest auth state without re-subscribing on every change.
+  const authRef = useRef<AuthState>(auth);
+  useEffect(() => {
+    authRef.current = auth;
+  }, [auth]);
 
   // Override auth state (called from Login page after manual login flow)
   const setManualAuth = (role: UserRole, userId?: string) => {
@@ -239,6 +246,35 @@ export function useAuth() {
         if (!mountedRef.current) return;
 
         if (event === 'SIGNED_IN' && session?.user) {
+          // IMPORTANT: Supabase's client (@supabase/auth-js) re-emits a
+          // 'SIGNED_IN' event every time the browser tab/app regains
+          // visibility/focus (switching apps, unlocking the phone,
+          // switching browser tabs, etc.) — even though the user never
+          // logged out and nothing actually changed. This is documented
+          // internal behaviour of the client's tab-visibility recovery
+          // logic and cannot be turned off via configuration.
+          //
+          // Previously we treated every 'SIGNED_IN' event the same as a
+          // brand-new login: isLoading was flipped to true (which swaps
+          // the entire app for <AppLoader />, see App.tsx) and the user's
+          // role was re-fetched from the database. That is exactly what
+          // produced the "app auto-refreshes every time I leave and come
+          // back" bug.
+          //
+          // Fix: if we're already authenticated as this same user, this is
+          // just Supabase confirming the existing session is still valid —
+          // quietly update the session/user reference and do nothing else
+          // (no loading screen, no re-fetch). Only run the full "new login"
+          // flow when the user actually changes (or we weren't
+          // authenticated yet).
+          const alreadySignedInAsThisUser =
+            authRef.current.isAuthenticated && authRef.current.userId === session.user.id;
+
+          if (alreadySignedInAsThisUser) {
+            setAuth(prev => ({ ...prev, session, user: session.user }));
+            return;
+          }
+
           // Keep isLoading true until role resolves
           setAuth({
             session,

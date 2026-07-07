@@ -46,7 +46,6 @@ const Navbar = ({ onMenuToggle, sidebarOpen, activePath }: NavbarProps) => {
   const navigate = useNavigate();
   const routeInfo = routeTitles[activePath] || { title: "StationPro", subtitle: "", emoji: "⛽" };
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const alertsRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -103,21 +102,6 @@ const Navbar = ({ onMenuToggle, sidebarOpen, activePath }: NavbarProps) => {
     document.documentElement.dir = i18n.dir();
   };
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      // Call the manual refresh handler from AppContext
-      const refreshFn = (window as any).__refreshAppData;
-      if (refreshFn && typeof refreshFn === 'function') {
-        await refreshFn();
-      }
-    } catch (err) {
-      console.error('Refresh failed:', err);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
   const alertCount = allAlerts.length;
 
   return (
@@ -163,14 +147,13 @@ const Navbar = ({ onMenuToggle, sidebarOpen, activePath }: NavbarProps) => {
       <div className="flex items-center gap-2">
         {/* Manual Refresh Button */}
         <button
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          title="Rafraîchir les données (appuyer manuellement pour mettre à jour)"
-          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 transition-all duration-200 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => window.location.reload()}
+          title="Rafraîchir l'application"
+          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 transition-all duration-200 hover:text-blue-700"
           style={{ background: "rgb(248,250,252)", border: "1px solid rgb(226,232,240)" }}
         >
-          <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
-          {isRefreshing ? "Actualisation..." : "Rafraîchir"}
+          <RefreshCw className="w-3.5 h-3.5" />
+          Rafraîchir
         </button>
 
         {/* Language Toggle */}
