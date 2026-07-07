@@ -305,10 +305,11 @@ export function useAuth() {
               isAuthenticated: false,
             });
           }
-        } else if (event === 'TOKEN_REFRESHED' && session) {
-          if (mountedRef.current) {
-            setAuth(prev => ({ ...prev, session, user: session.user }));
-          }
+        } else if (event === 'TOKEN_REFRESHED') {
+          // Do nothing on token refresh. This event is emitted whenever
+          // Supabase silently rotates or revalidates the JWT, including on
+          // tab/app focus, and it does not mean the user signed in again.
+          return;
         }
       }
     );
