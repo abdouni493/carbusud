@@ -10,7 +10,7 @@ import React, {
 } from 'react';
 import { ToastMessage, ToastType } from '../components/Toast';
 import { db, supabase, subscribeTable, uploadFile, uploadBase64, BUCKETS } from '../lib/supabase';
-import { newId } from '../lib/utils';
+import { newId, degreesFromLiters } from '../lib/utils';
 
 // ─── Null-or-zero sanitizer ────────────────────────────────────────────────────
 // Converts empty-string or undefined to null so optional UUID / date FK columns
@@ -773,6 +773,7 @@ type AppAction =
   | { type: 'HYDRATE'; payload: Partial<AppState> }
   | { type: 'ADD_TANK'; payload: Tank }
   | { type: 'UPDATE_TANK'; payload: Tank }
+  | { type: 'ADJUST_TANK_LEVELS'; payload: { tankId: string; deltaLiters: number }[] }
   | { type: 'DELETE_TANK'; payload: string }
   | { type: 'ADD_PUMP'; payload: Pump }
   | { type: 'UPDATE_PUMP'; payload: Pump }
@@ -897,6 +898,28 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'ADD_TANK':    return { ...state, tanks: [...state.tanks, action.payload] };
     case 'UPDATE_TANK': return { ...state, tanks: state.tanks.map(t => t.id === action.payload.id ? action.payload : t) };
+    // Delta-based tank adjustment (livraisons). Applied against the LIVE state
+    // (never a component snapshot) so successive rollback/apply pairs compose
+    // correctly. `degrees` is re-derived so gauge-based displays follow.
+    case 'ADJUST_TANK_LEVELS': {
+      const deltas: Record<string, number> = {};
+      action.payload.forEach(d => { if (d.tankId) deltas[d.tankId] = (deltas[d.tankId] || 0) + (d.deltaLiters || 0); });
+      return {
+        ...state,
+        tanks: state.tanks.map(t => {
+          const delta = deltas[t.id];
+          if (!delta) return t;
+          const newLiters = Math.max(0, (t.current || 0) + delta);
+          if (t.type === 'GPL') {
+            const percent = t.capacity > 0 ? (newLiters / t.capacity) * 100 : t.degrees;
+            return { ...t, current: newLiters, degrees: Math.max(0, Math.min(100, percent)) };
+          }
+          const curve = state.settings.conversionTables?.[t.id] || [];
+          if (curve.length > 0) return { ...t, current: newLiters, degrees: degreesFromLiters(curve, newLiters) };
+          return { ...t, current: newLiters };
+        }),
+      };
+    }
     case 'DELETE_TANK': return { ...state, tanks: state.tanks.filter(t => t.id !== action.payload) };
 
     case 'ADD_PUMP':    return { ...state, pumps: [...state.pumps, action.payload] };
@@ -1403,6 +1426,16 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'UPDATE_TANK':
         await db.updateTank(action.payload.id, { name: action.payload.name, type: action.payload.type, capacity: action.payload.capacity, current: action.payload.current, degrees: action.payload.degrees, alert_threshold: action.payload.alertThreshold, notes: action.payload.notes });
         break;
+      case 'ADJUST_TANK_LEVELS':
+        // Atomic server-side delta (SET current = current + delta) so concurrent
+        // sessions can't clobber each other. Requires the adjust_tank_level RPC
+        // (supabase/migrations/tank_level_delta_rpc.sql).
+        for (const d of action.payload) {
+          if (!d.tankId || !d.deltaLiters) continue;
+          const { error } = await supabase.rpc('adjust_tank_level', { p_tank_id: d.tankId, p_delta: d.deltaLiters });
+          if (error) throw new Error(`RPC adjust_tank_level: ${error.message}`);
+        }
+        break;
       case 'DELETE_TANK': await db.deleteTank(action.payload); break;
       case 'ADD_PERMISSION_TEMPLATE':
         await db.addPermissionTemplate({ id: action.payload.id, name: action.payload.name, role: action.payload.role, permissions: action.payload.permissions });
@@ -1707,7 +1740,10 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'ADD_DELIVERY_NOTE': {
         const d = action.payload;
         await db.addDeliveryNote({ id: d.id, date: d.date, supplier_id: nz(d.supplierId), tank_id: nz(d.tankId), liters: d.liters, price_per_liter: d.pricePerLiter, status: d.status, total: d.total, expiry_date: nz(d.expiryDate), bl_number: d.blNumber ?? null, bl_date: nz(d.blDate), creation_date: nz(d.creationDate), immatriculation: d.immatriculation ?? null, driver_id: nz(d.driverId) });
-        if (d.items?.length) await supabase.from('delivery_note_items').insert(d.items.map(it => ({ id: it.id, delivery_note_id: d.id, tank_id: nz(it.tankId), liters: it.liters, price_per_liter: it.pricePerLiter, total: it.total })));
+        if (d.items?.length) {
+          const { error: itemsErr } = await supabase.from('delivery_note_items').insert(d.items.map(it => ({ id: it.id, delivery_note_id: d.id, tank_id: nz(it.tankId), liters: it.liters, price_per_liter: it.pricePerLiter, total: it.total })));
+          if (itemsErr) throw new Error(`INSERT delivery_note_items: ${itemsErr.message}`);
+        }
         if (d.photos?.length) for (const url of d.photos) await db.addDeliveryNotePhoto({ delivery_note_id: d.id, photo_url: url });
         if (d.payments?.length) for (const p of d.payments) await db.addDeliveryNotePayment({ id: p.id, delivery_note_id: d.id, date: p.date, amount: p.amount, mode: p.mode, receipt_number: p.receiptNumber, receipt_photo_url: p.receiptPhoto });
         break;
@@ -1715,8 +1751,14 @@ async function syncToSupabase(action: AppAction): Promise<void> {
       case 'UPDATE_DELIVERY_NOTE': {
         const d = action.payload;
         await db.updateDeliveryNote(d.id, { date: d.date, supplier_id: nz(d.supplierId), tank_id: nz(d.tankId), liters: d.liters, price_per_liter: d.pricePerLiter, status: d.status, total: d.total, expiry_date: nz(d.expiryDate), bl_number: d.blNumber ?? null, bl_date: nz(d.blDate), creation_date: nz(d.creationDate), immatriculation: d.immatriculation ?? null, driver_id: nz(d.driverId) });
-        await supabase.from('delivery_note_items').delete().eq('delivery_note_id', d.id);
-        if (d.items?.length) await supabase.from('delivery_note_items').insert(d.items.map(it => ({ id: it.id, delivery_note_id: d.id, tank_id: nz(it.tankId), liters: it.liters, price_per_liter: it.pricePerLiter, total: it.total })));
+        {
+          const { error: delErr } = await supabase.from('delivery_note_items').delete().eq('delivery_note_id', d.id);
+          if (delErr) throw new Error(`DELETE delivery_note_items: ${delErr.message}`);
+        }
+        if (d.items?.length) {
+          const { error: insErr } = await supabase.from('delivery_note_items').insert(d.items.map(it => ({ id: it.id, delivery_note_id: d.id, tank_id: nz(it.tankId), liters: it.liters, price_per_liter: it.pricePerLiter, total: it.total })));
+          if (insErr) throw new Error(`INSERT delivery_note_items: ${insErr.message}`);
+        }
         // Re-sync photos so newly-attached scans persist on edit
         await supabase.from('delivery_note_photos').delete().eq('delivery_note_id', d.id);
         if (d.photos?.length) for (const url of d.photos) await db.addDeliveryNotePhoto({ delivery_note_id: d.id, photo_url: url });
@@ -1882,7 +1924,7 @@ async function refetchEntityAfterAction(
   try {
     switch (action.type) {
       // ── Tanks ───────────────────────────────────────────────────────────
-      case 'ADD_TANK': case 'UPDATE_TANK': case 'DELETE_TANK': {
+      case 'ADD_TANK': case 'UPDATE_TANK': case 'DELETE_TANK': case 'ADJUST_TANK_LEVELS': {
         const raw = await db.getTanks();
         dispatch({ type: 'HYDRATE', payload: { tanks: (raw as any[]).map(mapTank) } });
         break;
@@ -2573,7 +2615,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const { data } = await supabase.from('shop_sales').select('*').order('created_at', { ascending: false }).limit(500);
         return { shopSales: ((data ?? []) as any[]).map(mapShopSale) };
       },
-      delivery_notes: async () => ({ deliveryNotes: ((await db.getDeliveryNotes()) as any[]).map(mapDeliveryNote) }),
+      delivery_notes: async () => {
+        // Rebuild WITH sub-records — a lossy refetch here would drop `items`,
+        // and later edits/deletes would then roll back only the first cuve.
+        const raw          = await db.getDeliveryNotes();
+        const photosData   = await supabase.from('delivery_note_photos').select('*').then(r => r.data ?? []);
+        const paymentsData = await supabase.from('delivery_note_payments').select('*').then(r => r.data ?? []);
+        const itemsData    = await supabase.from('delivery_note_items').select('*').then(r => r.data ?? []);
+        const deliveryNotes = (raw as any[]).map(d => {
+          const m = mapDeliveryNote(d);
+          m.photos   = (photosData as any[]).filter(p => p.delivery_note_id === d.id).map(p => p.photo_url);
+          m.items    = (itemsData as any[]).filter(i => i.delivery_note_id === d.id).map(mapDeliveryNoteItem);
+          m.payments = (paymentsData as any[]).filter(p => p.delivery_note_id === d.id).map(p => ({ id: p.id, date: p.date, amount: +p.amount, mode: p.mode, receiptNumber: p.receipt_number, receiptPhoto: p.receipt_photo_url }));
+          return m;
+        });
+        return { deliveryNotes };
+      },
       purchases: async () => {
         const { data } = await supabase.from('purchases').select('*').order('created_at', { ascending: false }).limit(500);
         return { purchases: ((data ?? []) as any[]).map(mapPurchase) };
@@ -2598,79 +2655,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubs.forEach(u => u());
   }, [dispatch]);
 
-  // ── Re-hydrate when the JWT is refreshed ──────────────────────────────────
-  // If the app was opened with an expired token, some tables may have returned
-  // empty arrays during the initial load.  When Supabase auto-refreshes the JWT
-  // (TOKEN_REFRESHED event), re-fetch Phase 1 critical data so those tables fill
-  // in.  Individual subsequent requests are already protected by withAuthRetry.
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event) => {
-        if (event !== 'TOKEN_REFRESHED') return;
-        if (isHydrating.current) {
-          console.log('[AppContext] TOKEN_REFRESHED — hydration in progress, skipping re-hydrate');
-          return;
-        }
-        console.log('[AppContext] TOKEN_REFRESHED — re-hydrating critical data…');
-        isHydrating.current = true;
-        try {
-          const [
-            tanksRaw, pumpsRaw, tracksRaw, driversRaw,
-            productsRaw, brandsRaw,
-            pompistesRaw, chefsRaw, gerantsRaw, magasinRaw,
-            clientsRaw, suppliersRaw, brigadesRaw, settingsRaw,
-            brigadeAssignmentsRaw, chefAssignmentsRaw,
-          ] = await Promise.all([
-            db.getTanks(), db.getPumps(), db.getTracks(), db.getDrivers(),
-            db.getProducts(), db.getBrands(),
-            db.getPompistes(), db.getBrigadeChefs(),
-            db.getGerants(), db.getMagasinWorkers(),
-            db.getClients(), db.getSuppliers(),
-            db.getBrigades(), db.getSettings(),
-            supabase.from('brigade_pompiste_assignments').select('brigade_id, pompiste_id').then(r => r.data ?? []),
-            supabase.from('chef_pompiste_assignments').select('chef_id, pompiste_id').then(r => r.data ?? []),
-          ]);
-
-          const brigadeChefs = (chefsRaw as any[]).map(c => {
-            const m = mapBrigadeChef(c);
-            m.pompisteIds = (chefAssignmentsRaw as any[]).filter((a: any) => a.chef_id === c.id).map((a: any) => a.pompiste_id);
-            return m;
-          });
-          const brigades = (brigadesRaw as any[]).map(b => {
-            const m = mapBrigade(b);
-            m.pompisteIds = (brigadeAssignmentsRaw as any[]).filter((a: any) => a.brigade_id === b.id).map((a: any) => a.pompiste_id);
-            return m;
-          });
-
-          dispatch({
-            type: 'HYDRATE',
-            payload: {
-              tanks:         (tanksRaw  as any[]).map(mapTank),
-              pumps:         (pumpsRaw  as any[]).map(mapPump),
-              tracks:        (tracksRaw as any[]).map(mapTrack),
-              drivers:       (driversRaw as any[]).map(mapDriver),
-              products:      (productsRaw as any[]).map(mapProduct),
-              productBrands: (brandsRaw  as any[]).map(mapBrand),
-              pompistes:     (pompistesRaw as any[]).map(mapPompiste),
-              brigadeChefs,
-              gerants:       (gerantsRaw as any[]).map(mapGerant),
-              magasinWorkers:(magasinRaw as any[]).map(mapMagasinWorker),
-              clients:       (clientsRaw  as any[]).map(mapClient),
-              suppliers:     (suppliersRaw as any[]).map(mapSupplier),
-              brigades,
-              settings:      settingsRaw ? mapSettings(settingsRaw as any) : emptySettings,
-            },
-          });
-          console.log('[AppContext] TOKEN_REFRESHED re-hydration complete');
-        } catch (err) {
-          console.error('[AppContext] Re-hydration after TOKEN_REFRESHED failed:', err);
-        } finally {
-          isHydrating.current = false;
-        }
-      }
-    );
-    return () => subscription.unsubscribe();
-  }, [dispatch]);
+  // NOTE: We deliberately do NOT re-hydrate on the Supabase 'TOKEN_REFRESHED'
+  // event. That event fires whenever the JWT is silently renewed — including
+  // every time the user switches back to this tab after it was in the
+  // background — and re-fetching all critical tables there made the whole UI
+  // appear to "auto-refresh" itself each time the app regained focus. Data
+  // should only be reloaded on an explicit user action (e.g. a page reload),
+  // not implicitly from a token renewal.
 
   // ── Synced dispatch: optimistic update + Supabase write ───────────────────
   //

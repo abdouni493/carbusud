@@ -1154,11 +1154,15 @@ const Brigades = () => {
                         const startStr = fmtTime(b.startDatetime, b.startTime);
                         const endStr = fmtTime(b.endDatetime, b.endTime);
                         const creator = accounting?.createdBy || (b.notes?.startsWith('Créé par:') ? b.notes.replace('Créé par:', '').trim() : '');
+                        // Card shows a single date: the end date when the brigade spans
+                        // two calendar days, otherwise the (identical) start date.
+                        const endDatePart = b.endDatetime?.split('T')[0];
+                        const displayDate = (endDatePart && endDatePart !== b.date) ? endDatePart : b.date;
                         return (
                       <div className="flex items-start justify-between mb-4">
                         <div>
                           <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-1">{b.id.slice(0, 8)}</p>
-                          <p className="text-2xl font-black text-slate-800 italic">{b.date}</p>
+                          <p className="text-2xl font-black text-slate-800 italic">{displayDate}</p>
                           {(startStr || endStr) && (
                             <p className="text-[10px] font-bold text-slate-500 mt-0.5">🕐 {startStr} → {endStr}</p>
                           )}
