@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { Menu, Bell, Globe, ChevronRight, Fuel, X, Search, RefreshCw } from "lucide-react";
+import { Menu, Bell, Globe, ChevronRight, Fuel, X, Search } from "lucide-react";
 import { cn } from "@/src/lib/utils";
 import { useAppState } from "../store/AppContext";
 import {
@@ -145,18 +145,7 @@ const Navbar = ({ onMenuToggle, sidebarOpen, activePath }: NavbarProps) => {
 
       {/* Right Actions */}
       <div className="flex items-center gap-2">
-        {/* Manual Refresh Button */}
-        <button
-          onClick={() => window.location.reload()}
-          title="Rafraîchir l'application"
-          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 transition-all duration-200 hover:text-blue-700"
-          style={{ background: "rgb(248,250,252)", border: "1px solid rgb(226,232,240)" }}
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Rafraîchir
-        </button>
-
-        {/* Language Toggle */}
+          {/* Language Toggle */}
         <button
           onClick={toggleLanguage}
           className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 transition-all duration-200 hover:text-blue-700"
