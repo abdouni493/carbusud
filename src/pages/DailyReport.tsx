@@ -111,7 +111,15 @@ const DailyReport = () => {
     const selFuel     = fuelSales.filter(s => inRange(s.date));
     const selShop     = shopSales.filter(s => inRange(s.date));
     const selExp      = expenses.filter(e => inRange(e.date));
-    const selBrigades = brigades.filter(b => inRange(b.date));
+    // Brigades are selected by their END date: a brigade belongs to the fiche
+    // only if it finishes inside the period (e.g. a brigade created on 02-07
+    // that ends on 03-07 is excluded from the 02-07 → 02-07 fiche).
+    const brigadeEndDay = (b: typeof brigades[number]) =>
+      (b.endDatetime || b.endTimestamp || '').split('T')[0] || b.date;
+    const selBrigades = brigades.filter(b => {
+      const d = brigadeEndDay(b);
+      return d >= startDate && d <= endDate;
+    });
     const selDel      = deliveryNotes.filter(d => inRange(d.date));
     const selPurch    = purchases.filter(p => inRange(p.date));
 

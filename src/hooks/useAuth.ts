@@ -271,7 +271,13 @@ export function useAuth() {
             authRef.current.isAuthenticated && authRef.current.userId === session.user.id;
 
           if (alreadySignedInAsThisUser) {
-            setAuth(prev => ({ ...prev, session, user: session.user }));
+            // Same token → return the previous state object unchanged so React
+            // bails out of the update and nothing re-renders at all.
+            setAuth(prev =>
+              prev.session?.access_token === session.access_token
+                ? prev
+                : { ...prev, session, user: session.user }
+            );
             return;
           }
 

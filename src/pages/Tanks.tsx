@@ -4,7 +4,7 @@ import {
   X, ChevronDown, Droplets, Database, Settings2, ArrowRight, Percent
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { cn, litersFromDegrees, newId } from "@/src/lib/utils";
+import { cn, litersFromDegrees, degreesFromLiters, newId } from "@/src/lib/utils";
 import { useAppState, useAppDispatch, useModulePermission, Tank, FuelType } from "../store/AppContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import EmptyState from "../components/EmptyState";
@@ -22,12 +22,10 @@ const fuelColors: Record<string, { bg: string; text: string; bar: string }> = {
 
 // ── TankCard ─────────────────────────────────────────────────────────────────
 const TankCard = ({ tank, settings, onEdit, onDelete, onHistory, onConverter, onGplCalc, canEdit = true, canDelete = true }: any) => {
-  const curve: { degree: number; liters: number }[] =
-    settings?.conversionTables?.[tank.id] || [];
-  // Use curve-derived liters if a curve exists; fall back to stored current.
-  const displayLiters = curve.length > 0
-    ? litersFromDegrees(curve, tank.degrees)
-    : tank.current;
+  // `current` is the authoritative level: every writer (modal save, calcul GPL,
+  // livraisons RPC, clôture brigade, inventaire, saisie manuelle) persists it,
+  // whereas `degrees` can lag (manual level outside the curve, inventaire).
+  const displayLiters = tank.current;
   // Guard against capacity === 0 to avoid NaN/Infinity.
   const pct = tank.capacity > 0
     ? Math.min(100, (displayLiters / tank.capacity) * 100)
@@ -126,15 +124,23 @@ const TankHistoryModal = ({ tank, onClose, brigades, deliveryNotes }: any) => {
   const history = useMemo(() => {
     const items: any[] = [];
 
-    // Approvisionnements (Delivery Notes)
-    deliveryNotes.filter((d: any) => d.tankId === tank.id).forEach((d: any) => {
+    // Approvisionnements (Delivery Notes) — a BL can deliver to several cuves
+    // via its `items`; only fall back to the legacy single-tank fields when no
+    // items exist, otherwise every cuve of the BL gets its own history entry.
+    deliveryNotes.forEach((d: any) => {
+      const litersForTank = (d.items && d.items.length > 0)
+        ? d.items
+            .filter((it: any) => it.tankId === tank.id)
+            .reduce((a: number, it: any) => a + (it.liters || 0), 0)
+        : (d.tankId === tank.id ? (d.liters || 0) : 0);
+      if (litersForTank <= 0) return;
       items.push({
-        id: d.id,
+        id: `${d.id}-${tank.id}`,
         date: new Date(d.date).getTime(),
-        displayDate: d.date,
+        displayDate: d.blNumber ? `${d.date} • BL ${d.blNumber}` : d.date,
         type: 'APP',
         label: 'Approvisionnement',
-        amount: d.liters,
+        amount: litersForTank,
         status: d.status
       });
     });
@@ -232,6 +238,9 @@ const TankModal = ({ tank, onClose, onSave, settings }: any) => {
     notes: tank?.notes ?? "",
   });
   const set = (k: string, v: any) => setForm(prev => ({ ...prev, [k]: v }));
+  // True once the user types the level directly — the manual value then wins
+  // over the curve/percentage-derived one until "Recalculer" is pressed.
+  const [manualCurrent, setManualCurrent] = useState(false);
 
   // Gauge curve for this tank (only available when editing an existing tank).
   const curve: { degree: number; liters: number }[] =
@@ -240,11 +249,13 @@ const TankModal = ({ tank, onClose, onSave, settings }: any) => {
 
   // Liters computed live from the degrees input.
   const isGpl = form.type === 'GPL';
+  const autoAvailable = hasCurve || isGpl;
   const computedLiters = isGpl
-    ? form.capacity * (form.degrees / 100)
+    ? Math.round(form.capacity * (form.degrees / 100))
     : (hasCurve
       ? litersFromDegrees(curve, form.degrees)
       : form.current);
+  const effectiveLiters = autoAvailable && !manualCurrent ? computedLiters : form.current;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -301,22 +312,24 @@ const TankModal = ({ tank, onClose, onSave, settings }: any) => {
               <input type="number" className="input-field" value={form.degrees}
                 onChange={e => set("degrees", Number(e.target.value) || 0)} min={0} max={isGpl ? 100 : undefined} />
             </div>
-            {hasCurve || isGpl ? (
-              <div>
-                <label className="label-field">Niveau Actuel (calculé)</label>
-                {/* Read-only highlighted value derived from the gauge curve or percentage */}
-                <div className="input-field bg-blue-50 border-blue-200 text-blue-900 font-black flex items-center gap-2 cursor-default select-none">
-                  <Droplets className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                  {computedLiters.toLocaleString()} L
-                </div>
-              </div>
-            ) : (
-              <div>
-                <label className="label-field">Niveau Actuel (L)</label>
-                <input type="number" className="input-field" value={form.current}
-                  onChange={e => set("current", Number(e.target.value) || 0)} min={0} />
-              </div>
-            )}
+            <div>
+              <label className="label-field">Niveau Actuel (L)</label>
+              <input type="number" className="input-field" value={effectiveLiters}
+                onChange={e => { set("current", Number(e.target.value) || 0); setManualCurrent(true); }} min={0} />
+              {autoAvailable && (manualCurrent ? (
+                <button
+                  type="button"
+                  onClick={() => setManualCurrent(false)}
+                  className="mt-1.5 text-[10px] font-bold text-blue-600 hover:text-blue-800 underline flex items-center gap-1"
+                >
+                  <Droplets className="w-3 h-3" /> Recalculer depuis {isGpl ? "le pourcentage" : "les degrés"}
+                </button>
+              ) : (
+                <p className="mt-1.5 text-[10px] text-slate-400 font-bold">
+                  Calculé automatiquement — saisissez une valeur pour corriger manuellement.
+                </p>
+              ))}
+            </div>
           </div>
 
           {/* Fallback note when no gauge curve is configured */}
@@ -339,7 +352,19 @@ const TankModal = ({ tank, onClose, onSave, settings }: any) => {
             Annuler
           </button>
           <button
-            onClick={() => onSave({ ...form, current: computedLiters })}
+            onClick={() => {
+              // On manual entry, re-derive `degrees` from the typed liters so the
+              // card (curve-derived display) and the DB stay consistent.
+              let degrees = form.degrees;
+              if (manualCurrent) {
+                if (isGpl && form.capacity > 0) {
+                  degrees = Math.max(0, Math.min(100, (form.current / form.capacity) * 100));
+                } else if (hasCurve) {
+                  degrees = degreesFromLiters(curve, form.current);
+                }
+              }
+              onSave({ ...form, degrees, current: effectiveLiters });
+            }}
             className="flex-[2] bg-gradient-to-r from-blue-900 to-blue-800 hover:shadow-lg text-white font-black uppercase tracking-widest rounded-lg py-3 transition-all transform hover:-translate-y-0.5 text-[10px]"
           >
             {tank ? "ENREGISTRER LA CUVE" : "CRÉER LA CUVE"}
