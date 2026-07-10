@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Plus,
@@ -19,12 +19,17 @@ import {
   Package,
   Info,
   ChevronDown,
-  AlertCircle
+  AlertCircle,
+  Camera,
+  Upload,
+  Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAppState, useAppDispatch, useModulePermission, Product, Supplier, Purchase, PurchaseItem, DEFAULT_PRODUCT_UNITS } from "../store/AppContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { cn, newId } from "@/src/lib/utils";
+import { uploadFile, BUCKETS } from "../lib/supabase";
+import { exportElementToPdf } from "../lib/pdf";
 
 const Purchases = () => {
   const { t } = useTranslation();
@@ -56,6 +61,9 @@ const Purchases = () => {
   const [initialPaymentMode, setInitialPaymentMode] = useState<"ESPECES" | "CHEQUE">("ESPECES");
   const [chequeNumber, setChequeNumber] = useState("");
   const [notes, setNotes] = useState("");
+  // Purchase invoice scan (saved to the shared "invoices" bucket via receiptPhoto)
+  const [invoiceScanFile, setInvoiceScanFile] = useState<File | null>(null);
+  const [invoiceScanPreview, setInvoiceScanPreview] = useState("");
 
   // Product Selection Form within Modal
   const [productSearch, setProductSearch] = useState("");
@@ -82,6 +90,33 @@ const Purchases = () => {
   });
 
   const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
+
+  // Bon de commande printing
+  const bonCommandeRef = useRef<HTMLDivElement>(null);
+  const [printCommande, setPrintCommande] = useState<Purchase | null>(null);
+  const [pendingPrint, setPendingPrint] = useState(false);
+  const [printPrompt, setPrintPrompt] = useState<Purchase | null>(null); // "print after create?" prompt
+
+  // Once the hidden bon-de-commande DOM is rendered, capture it to a PDF
+  useEffect(() => {
+    if (!printCommande || !pendingPrint) return;
+    let cancelled = false;
+    (async () => {
+      // let the browser paint the hidden document (logo image + layout)
+      await new Promise((r) => setTimeout(r, 200));
+      if (cancelled || !bonCommandeRef.current) return;
+      const ref = printCommande.invoiceNumber || printCommande.id.slice(0, 8);
+      const ok = await exportElementToPdf(bonCommandeRef.current, `Bon-de-Commande-${ref}.pdf`, { fit: "single", margin: 8 });
+      if (!ok) dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "Échec de la génération du PDF" } });
+      if (!cancelled) { setPendingPrint(false); setPrintCommande(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [printCommande, pendingPrint, dispatch]);
+
+  const handleDownloadCommande = (purchase: Purchase) => {
+    setPrintCommande(purchase);
+    setPendingPrint(true);
+  };
 
   // Close menus on click outside
   useEffect(() => {
@@ -298,6 +333,8 @@ const Purchases = () => {
           lastSellingPrice: item.sellingPrice
         }))
       );
+      setInvoiceScanFile(null);
+      setInvoiceScanPreview(purchase.receiptPhoto || "");
       setSelectedPurchase(purchase);
     } else {
       setIsCommand(false);
@@ -313,12 +350,21 @@ const Purchases = () => {
       setChequeNumber("");
       setNotes("");
       setCart([]);
+      setInvoiceScanFile(null);
+      setInvoiceScanPreview("");
       setSelectedPurchase(null);
     }
     setShowCreateModal(true);
   };
 
-  const handleSavePurchase = (e: React.FormEvent) => {
+  const handleInvoiceScanChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setInvoiceScanFile(file);
+    setInvoiceScanPreview(URL.createObjectURL(file));
+  };
+
+  const handleSavePurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supplierId) {
       dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "Veuillez choisir un fournisseur" } });
@@ -327,6 +373,16 @@ const Purchases = () => {
     if (cart.length === 0) {
       dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "Votre panier est vide" } });
       return;
+    }
+
+    // Upload the purchase invoice scan (if a new file was chosen) to the shared invoices bucket
+    const purchaseId = selectedPurchase ? selectedPurchase.id : newId();
+    let invoiceScanUrl: string | undefined = invoiceScanPreview && !invoiceScanPreview.startsWith("blob:")
+      ? invoiceScanPreview
+      : selectedPurchase?.receiptPhoto;
+    if (invoiceScanFile) {
+      const url = await uploadFile(BUCKETS.INVOICES, `magasin-purchase-${purchaseId}-${Date.now()}`, invoiceScanFile);
+      if (url) invoiceScanUrl = url;
     }
 
     const type = isCommand ? "COMMANDE" : "RECEPTION";
@@ -358,7 +414,7 @@ const Purchases = () => {
     });
 
     const newPurchase: Purchase = {
-      id: selectedPurchase ? selectedPurchase.id : newId(),
+      id: purchaseId,
       date: invoiceDate,
       supplierId,
       invoiceNumber: invoiceNumber || undefined,
@@ -380,7 +436,8 @@ const Purchases = () => {
       notes,
       type,
       tvaActive,
-      tvaRate: tvaActive ? tvaRate : undefined
+      tvaRate: tvaActive ? tvaRate : undefined,
+      receiptPhoto: invoiceScanUrl
     };
 
     // Revert old effects if editing
@@ -497,6 +554,11 @@ const Purchases = () => {
     }
 
     setShowCreateModal(false);
+
+    // After creating a NEW bon de commande, offer to print/download it
+    if (isCommand && !selectedPurchase) {
+      setPrintPrompt(newPurchase);
+    }
   };
 
   const handleDelete = () => {
@@ -789,6 +851,17 @@ const Purchases = () => {
                           >
                             <Eye className="w-4 h-4" />
                           </button>
+
+                          {purchase.type === "COMMANDE" && (
+                            <button
+                              onClick={() => handleDownloadCommande(purchase)}
+                              disabled={pendingPrint}
+                              className="px-2.5 py-1 bg-blue-900 hover:bg-blue-800 text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-colors flex items-center gap-1 disabled:opacity-50"
+                              title="Télécharger le bon de commande (PDF)"
+                            >
+                              <Printer className="w-3.5 h-3.5" /> Bon
+                            </button>
+                          )}
 
                           {purchase.type === "RECEPTION" && purchase.rest > 0 && (
                             <button
@@ -1318,6 +1391,30 @@ const Purchases = () => {
                   </div>
                 )}
 
+                {/* Scan de la facture d'achat (enregistré dans le bucket des factures) */}
+                <div className="space-y-4 p-5 bg-gradient-to-br from-indigo-50 to-blue-50/40 rounded-[1.8rem] border-2 border-indigo-200">
+                  <span className="text-[9px] uppercase tracking-widest font-black text-indigo-800 flex items-center gap-1.5 mb-1">
+                    <Camera className="w-3.5 h-3.5" /> Scan de la facture d'achat {isCommand && <span className="text-indigo-400 normal-case">(facultatif)</span>}
+                  </span>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <label className="px-5 py-3 bg-white border-2 border-dashed border-indigo-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-indigo-600 flex items-center gap-2 cursor-pointer hover:bg-indigo-50 transition-all">
+                      <Upload className="w-4 h-4" /> {invoiceScanPreview ? "Remplacer le scan" : "Ajouter le scan de la facture"}
+                      <input type="file" className="hidden" accept="image/*,application/pdf" onChange={handleInvoiceScanChange} />
+                    </label>
+                    {invoiceScanPreview && (
+                      <div className="flex items-center gap-2">
+                        {invoiceScanPreview.toLowerCase().includes(".pdf") ? (
+                          <div className="w-16 h-16 rounded-xl border border-indigo-200 flex items-center justify-center bg-white"><FileText className="w-8 h-8 text-indigo-300" /></div>
+                        ) : (
+                          <img src={invoiceScanPreview} className="w-16 h-16 object-cover rounded-xl border border-indigo-200" alt="facture" />
+                        )}
+                        <a href={invoiceScanPreview} target="_blank" rel="noopener noreferrer" className="px-3 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-[10px] font-black uppercase flex items-center gap-1"><Download className="w-3 h-3" /> Voir</a>
+                        <button type="button" onClick={() => { setInvoiceScanFile(null); setInvoiceScanPreview(""); }} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Retirer"><X className="w-4 h-4" /></button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Notes */}
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-blue-900 uppercase tracking-widest pl-1">Notes</label>
@@ -1620,9 +1717,34 @@ const Purchases = () => {
                   )}
                 </div>
 
+                {/* Scanned purchase invoice */}
+                {selectedPurchase.receiptPhoto && (
+                  <div className="space-y-2">
+                    <span className="block text-[9px] uppercase tracking-widest text-slate-400 font-black">Facture d'achat scannée</span>
+                    {selectedPurchase.receiptPhoto.toLowerCase().includes(".pdf") ? (
+                      <a href={selectedPurchase.receiptPhoto} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 h-32 rounded-xl border border-slate-100 bg-slate-50 text-blue-900"><FileText className="w-8 h-8 opacity-40" /><span className="text-[10px] font-black uppercase">Ouvrir le PDF</span></a>
+                    ) : (
+                      <a href={selectedPurchase.receiptPhoto} target="_blank" rel="noopener noreferrer" className="block rounded-xl overflow-hidden border border-slate-100">
+                        <img src={selectedPurchase.receiptPhoto} alt="Facture" className="w-full max-h-72 object-contain bg-slate-50" />
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {selectedPurchase.type === "COMMANDE" && (
+                  <button
+                    onClick={() => handleDownloadCommande(selectedPurchase)}
+                    disabled={pendingPrint}
+                    className="w-full h-11 rounded-xl text-xs font-black uppercase tracking-widest italic flex items-center justify-center gap-2 text-white disabled:opacity-50"
+                    style={{ backgroundColor: "#003087" }}
+                  >
+                    <Printer className="w-4 h-4" /> Télécharger le bon de commande
+                  </button>
+                )}
+
                 <button
                   onClick={() => setShowDetailModal(false)}
-                  className="w-full h-11 bg-blue-900 text-white rounded-xl text-xs font-black uppercase tracking-widest italic"
+                  className="w-full h-11 bg-white text-slate-700 border-2 border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest italic hover:bg-slate-50"
                 >
                   Fermer
                 </button>
@@ -1631,6 +1753,143 @@ const Purchases = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Print prompt after creating a bon de commande */}
+      <AnimatePresence>
+        {printPrompt && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setPrintPrompt(null)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white w-full max-w-md rounded-3xl relative z-10 shadow-2xl border border-slate-100 p-7 space-y-5 text-center">
+              <div className="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center" style={{ backgroundColor: "#003087" }}>
+                <Printer className="w-8 h-8" style={{ color: "#FFB800" }} />
+              </div>
+              <div>
+                <h3 className="font-black text-lg text-blue-900 uppercase tracking-tight">Bon de commande créé</h3>
+                <p className="text-xs font-semibold text-slate-500 mt-1">Voulez-vous télécharger / imprimer le bon de commande maintenant ?</p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setPrintPrompt(null)} className="flex-1 py-3 bg-white text-slate-600 rounded-xl font-black text-xs uppercase tracking-widest border-2 border-slate-200 hover:bg-slate-50">Plus tard</button>
+                <button onClick={() => { const p = printPrompt; setPrintPrompt(null); if (p) handleDownloadCommande(p); }} className="flex-[1.5] py-3 rounded-xl font-black text-xs uppercase tracking-widest text-white flex items-center justify-center gap-2" style={{ backgroundColor: "#003087" }}>
+                  <Printer className="w-4 h-4" /> Télécharger le bon
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Hidden printable Bon de Commande (captured to PDF) */}
+      {printCommande && (() => {
+        const p = printCommande;
+        const supplier = suppliers.find(s => s.id === p.supplierId);
+        const subtotalHT = p.items.reduce((acc, it) => acc + it.total, 0);
+        const tvaAmount = p.tvaActive ? subtotalHT * ((p.tvaRate || 0) / 100) : 0;
+        const NAVY = "#003087";
+        const GOLD = "#FFB800";
+        return (
+          <div style={{ position: "fixed", left: "-10000px", top: 0, zIndex: -1, pointerEvents: "none" }}>
+            <div ref={bonCommandeRef} style={{ width: "794px", backgroundColor: "#ffffff", padding: "40px", fontFamily: "Arial, Helvetica, sans-serif", color: "#0f172a", boxSizing: "border-box" }}>
+              {/* Header: station identity + logo */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: "18px", borderBottom: `3px solid ${NAVY}` }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "16px" }}>
+                  {(settings.logoUrl || settings.logo) ? (
+                    <img src={settings.logoUrl || settings.logo} alt="logo" style={{ width: "70px", height: "70px", objectFit: "contain", borderRadius: "10px", border: "1px solid #e2e8f0" }} />
+                  ) : (
+                    <div style={{ width: "70px", height: "70px", backgroundColor: NAVY, borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ color: GOLD, fontWeight: 900, fontSize: "26px" }}>⛽</span>
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 900, fontSize: "22px", color: NAVY, lineHeight: 1.1 }}>{settings.name || "Station"}</div>
+                    <div style={{ fontWeight: 800, fontSize: "11px", color: NAVY, letterSpacing: "2px", marginTop: "4px" }}>BON DE COMMANDE</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", fontSize: "11px", color: "#475569", lineHeight: 1.6 }}>
+                  {settings.address && <div>{settings.address}</div>}
+                  {settings.phone && <div>Tél : {settings.phone}</div>}
+                  {settings.email && <div>{settings.email}</div>}
+                  {settings.fiscalId && <div>NIF : {settings.fiscalId}</div>}
+                  {settings.rc && <div>RC : {settings.rc}</div>}
+                </div>
+              </div>
+              {/* Accent bar with app colors */}
+              <div style={{ height: "4px", background: `linear-gradient(to right, ${NAVY}, ${GOLD}, ${NAVY})`, marginTop: "10px", marginBottom: "20px" }} />
+
+              {/* Commande meta */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "10px", marginBottom: "22px" }}>
+                {[
+                  { label: "N° Commande", value: p.invoiceNumber || p.id.slice(0, 8) },
+                  { label: "Date", value: p.date },
+                  { label: "Fournisseur", value: supplier?.name || "—" },
+                  { label: "Échéance", value: p.dueDate || "—" },
+                ].map(m => (
+                  <div key={m.label} style={{ backgroundColor: "#eff6ff", border: "1px solid #dbeafe", borderRadius: "10px", padding: "10px", textAlign: "center" }}>
+                    <div style={{ fontSize: "9px", fontWeight: 900, color: "#60a5fa", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "4px" }}>{m.label}</div>
+                    <div style={{ fontSize: "12px", fontWeight: 900, color: NAVY }}>{m.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Products table */}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                <thead>
+                  <tr style={{ backgroundColor: NAVY, color: "#ffffff" }}>
+                    <th style={{ padding: "10px 8px", textAlign: "left", width: "36px" }}>#</th>
+                    <th style={{ padding: "10px 8px", textAlign: "left" }}>Désignation</th>
+                    <th style={{ padding: "10px 8px", textAlign: "center" }}>Quantité</th>
+                    <th style={{ padding: "10px 8px", textAlign: "center" }}>Unité</th>
+                    <th style={{ padding: "10px 8px", textAlign: "right" }}>Prix Unitaire</th>
+                    <th style={{ padding: "10px 8px", textAlign: "right" }}>Montant</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {p.items.map((it, idx) => (
+                    <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0", backgroundColor: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
+                      <td style={{ padding: "9px 8px", color: "#94a3b8", fontWeight: 700 }}>{idx + 1}</td>
+                      <td style={{ padding: "9px 8px", fontWeight: 700, color: "#1e293b" }}>{it.productName}</td>
+                      <td style={{ padding: "9px 8px", textAlign: "center", fontWeight: 800, color: NAVY }}>{it.quantity.toLocaleString()}</td>
+                      <td style={{ padding: "9px 8px", textAlign: "center", color: "#64748b" }}>{it.unit || "U"}</td>
+                      <td style={{ padding: "9px 8px", textAlign: "right", color: "#475569" }}>{it.buyPrice.toLocaleString()} DA</td>
+                      <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 900, color: NAVY }}>{it.total.toLocaleString()} DA</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Totals */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "18px" }}>
+                <div style={{ width: "300px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "12px", color: "#475569", fontWeight: 700 }}>
+                    <span>Total HT</span><span>{subtotalHT.toLocaleString()} DA</span>
+                  </div>
+                  {p.tvaActive && (
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", fontSize: "12px", color: "#475569", fontWeight: 700 }}>
+                      <span>TVA ({p.tvaRate || 0}%)</span><span>{tvaAmount.toLocaleString()} DA</span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "12px", fontSize: "15px", fontWeight: 900, color: "#ffffff", backgroundColor: NAVY, borderRadius: "10px", marginTop: "6px" }}>
+                    <span>TOTAL</span><span style={{ color: GOLD }}>{p.total.toLocaleString()} DA</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Signatures + footer */}
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "50px", fontSize: "11px", color: "#475569" }}>
+                <div style={{ textAlign: "center", width: "220px" }}>
+                  <div style={{ borderTop: "1px solid #94a3b8", paddingTop: "6px", fontWeight: 800 }}>Le Fournisseur</div>
+                </div>
+                <div style={{ textAlign: "center", width: "220px" }}>
+                  <div style={{ borderTop: "1px solid #94a3b8", paddingTop: "6px", fontWeight: 800 }}>Le Responsable Achats</div>
+                </div>
+              </div>
+              {p.notes && <div style={{ marginTop: "24px", fontSize: "11px", color: "#64748b", fontStyle: "italic" }}>Note : {p.notes}</div>}
+              <div style={{ marginTop: "26px", textAlign: "center", fontSize: "9px", color: "#94a3b8", letterSpacing: "1px" }}>
+                {settings.name || "Station"} — Bon de commande généré le {new Date().toLocaleDateString("fr-DZ")}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Delete Confirmation */}
       <ConfirmDialog

@@ -7,7 +7,7 @@ import {
   Edit2, Loader2, ChevronDown, Info, Camera, Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { cn, newId } from "@/src/lib/utils";
+import { cn, newId, nowDatetimeLocal, datetimeLocalToISO } from "@/src/lib/utils";
 import { uploadFile, BUCKETS } from "../lib/supabase";
 import { useAppState, useAppDispatch, useModulePermission, Product, Client, ShopSale } from "../store/AppContext";
 import toast from "react-hot-toast";
@@ -78,6 +78,8 @@ const ShopPOS = () => {
   const [amountPaid, setAmountPaid] = useState(0);
   const [salesNotes, setSalesNotes] = useState("");
   const [prevTotal, setPrevTotal] = useState(0);
+  // Sale date — prefilled to the current system date/time, editable by the user
+  const [saleDate, setSaleDate] = useState(nowDatetimeLocal());
 
   // Receipt Modal
   const [showReceipt, setShowReceipt] = useState(false);
@@ -324,6 +326,7 @@ const ShopPOS = () => {
     setBonNum("");
     setBonPhoto("");
     setSalesNotes("");
+    setSaleDate(nowDatetimeLocal()); // default to current system date/time, editable
     setAmountPaid(total); // prefilled to pay everything
     
     // Auto method preference
@@ -388,7 +391,7 @@ const ShopPOS = () => {
 
     const sale: ShopSale = {
       id: saleId,
-      date: new Date().toISOString(),
+      date: datetimeLocalToISO(saleDate),
       clientId: selectedClient?.id,
       sellerId: currentUserId,
       items: cart.map(i => ({
@@ -464,6 +467,7 @@ const ShopPOS = () => {
     setBonPhoto("");
     setInvoiceImageFile(null);
     setInvoiceImagePreview("");
+    setSaleDate(nowDatetimeLocal()); // reset for the next sale
     setReceiptSale(sale);
     setShowPaymentModal(false);
     setShowReceipt(true);
@@ -1175,6 +1179,13 @@ const ShopPOS = () => {
                       </div>
                     )}
 
+                    {/* Sale date — defaults to now, editable */}
+                    <div className="space-y-1">
+                      <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest block">Date de la vente</label>
+                      <input type="datetime-local" value={saleDate} onChange={e => setSaleDate(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg h-9 px-3 text-xs font-bold text-[#003087] outline-none" />
+                    </div>
+
                     {/* Notes */}
                     <div className="space-y-1">
                       <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest block">Note / Plaque</label>
@@ -1618,7 +1629,7 @@ const ShopPOS = () => {
             className="lg:hidden fixed bottom-6 left-4 right-4 z-40"
           >
             <button
-              onClick={() => setShowMobileCart(true)}
+              onClick={() => { setSaleDate(nowDatetimeLocal()); setShowMobileCart(true); }}
               className="w-full bg-gradient-to-r from-[#003087] to-[#001f5c] text-white rounded-2xl px-5 py-4 flex items-center justify-between shadow-2xl active:scale-[0.98] transition-all"
             >
               <div className="flex items-center gap-3">
@@ -1879,6 +1890,13 @@ const ShopPOS = () => {
                       )}
                     </div>
                   )}
+
+                  {/* Sale date (mobile) — defaults to now, editable */}
+                  <div className="space-y-1">
+                    <label className="text-[7px] font-black text-slate-400 uppercase tracking-widest block">Date de la vente</label>
+                    <input type="datetime-local" value={saleDate} onChange={e => setSaleDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg h-10 px-3 text-sm font-bold text-[#003087] outline-none" />
+                  </div>
 
                   {/* Note (mobile) */}
                   <div className="space-y-1">
