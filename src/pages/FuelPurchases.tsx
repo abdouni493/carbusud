@@ -151,6 +151,8 @@ const BonsLivraisonTab = () => {
   ]);
   const [photos, setPhotos] = useState<string[]>([]);
   const [pendingPhotoFiles, setPendingPhotoFiles] = useState<File[]>([]);
+  // Manual total override — null means the total is auto-computed from the items
+  const [manualTotal, setManualTotal] = useState<number | null>(null);
 
   // Computed totals
   const grandTotal = useMemo(
@@ -192,6 +194,7 @@ const BonsLivraisonTab = () => {
     setFormItems([{ id: newId(), tankId: "", liters: 0, pricePerLiter: 0 }]);
     setPhotos([]);
     setPendingPhotoFiles([]);
+    setManualTotal(null);
     setScanError(false);
     setShowNewDriver(false);
     setNewDriverName("");
@@ -235,9 +238,13 @@ const BonsLivraisonTab = () => {
     });
     setShowNewDriver(false);
     setNewDriverName("");
+    const editItems = getBLItems(bl);
     setFormItems(
-      getBLItems(bl).map((i) => ({ id: i.id || newId(), tankId: i.tankId, liters: i.liters, pricePerLiter: i.pricePerLiter }))
+      editItems.map((i) => ({ id: i.id || newId(), tankId: i.tankId, liters: i.liters, pricePerLiter: i.pricePerLiter }))
     );
+    // If the stored total differs from the computed sum, it was manually overridden
+    const computedSum = editItems.reduce((a, i) => a + (i.liters || 0) * (i.pricePerLiter || 0), 0);
+    setManualTotal(Math.abs((bl.total || 0) - computedSum) > 0.01 ? bl.total : null);
     setPhotos(bl.photos || []);
     setPendingPhotoFiles([]);
     setScanError(false);
@@ -307,7 +314,8 @@ const BonsLivraisonTab = () => {
         setPendingPhotoFiles([]);
       }
       const items: DeliveryNoteItem[] = validItems.map((i) => ({ id: i.id, deliveryNoteId: form.id, tankId: i.tankId, liters: i.liters, pricePerLiter: i.pricePerLiter, total: i.liters * i.pricePerLiter }));
-      const total = items.reduce((a, i) => a + i.total, 0);
+      // Total = manual override when the user edited it, otherwise the sum of the items
+      const total = manualTotal !== null ? manualTotal : items.reduce((a, i) => a + i.total, 0);
       const first = items[0];
 
       if (selectedBL) {
@@ -449,7 +457,7 @@ const BonsLivraisonTab = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Numéro BL *</label><input type="text" value={form.blNumber} onChange={(e) => setForm({ ...form, blNumber: e.target.value })} className="input-field h-11 text-xs font-black uppercase border-slate-200" placeholder="Ex: BL-12345" /></div>
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date BL *</label><input type="date" value={form.blDate} onChange={(e) => setForm({ ...form, blDate: e.target.value, date: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
-                    <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de création</label><input type="date" value={form.creationDate} onChange={(e) => setForm({ ...form, creationDate: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
+                    <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de création <span className="text-slate-300 normal-case text-[8px]">(Auto)</span></label><input type="date" value={form.creationDate} readOnly disabled title="La date de création est automatique et non modifiable" className="input-field h-11 text-xs font-black border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed" /></div>
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Immatriculation <span className="text-slate-300 normal-case text-[8px]">(Optionnel)</span></label><input type="text" value={form.immatriculation} onChange={(e) => setForm({ ...form, immatriculation: e.target.value })} className="input-field h-11 text-xs font-black uppercase border-slate-200" placeholder="Ex: 12345-116-16" /></div>
                     <div className="space-y-1 col-span-2"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Fournisseur *</label>
                       <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} className="input-field h-11 text-xs font-black uppercase border-slate-200">
@@ -539,9 +547,29 @@ const BonsLivraisonTab = () => {
                       );
                     })}
                   </div>
-                  <div className="bg-slate-900 rounded-2xl flex items-center justify-between px-5 py-4">
-                    <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">Total ({grandLiters.toLocaleString()} L)</span>
-                    <span className="text-lg font-black text-[#FFB800]">{grandTotal.toLocaleString()} <span className="text-[10px] opacity-40 text-white">DA</span></span>
+                  <div className="bg-slate-900 rounded-2xl px-5 py-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-black text-white/40 uppercase tracking-widest">Total ({grandLiters.toLocaleString()} L)</span>
+                        {manualTotal !== null && (
+                          <span className="text-[8px] font-black text-[#FFB800]/70 uppercase tracking-widest">Total modifié manuellement</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={manualTotal !== null ? manualTotal : Math.round(grandTotal * 100) / 100}
+                          onChange={(e) => setManualTotal(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+                          className="w-40 bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-right text-lg font-black text-[#FFB800] focus:outline-none focus:border-[#FFB800]"
+                          title="Total modifiable manuellement"
+                        />
+                        <span className="text-[10px] opacity-40 text-white font-black">DA</span>
+                        {manualTotal !== null && (
+                          <button type="button" onClick={() => setManualTotal(null)} title="Recalculer automatiquement" className="px-2 py-1 bg-white/10 hover:bg-white/20 text-white/70 rounded-lg text-[8px] font-black uppercase tracking-widest">Auto</button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </section>
 
@@ -698,6 +726,9 @@ const FacturationTab = () => {
   const [form, setForm] = useState(blankForm);
   const [invoiceImageFile, setInvoiceImageFile] = useState<File | null>(null);
   const [invoiceImagePreview, setInvoiceImagePreview] = useState("");
+  // Manual total override (null = auto) and mandatory-scan error flag
+  const [manualTotal, setManualTotal] = useState<number | null>(null);
+  const [scanError, setScanError] = useState(false);
 
   const selectedBLs = useMemo(
     () => form.selectedBlIds.map((id) => deliveryNotes.find((d) => d.id === id)).filter(Boolean) as DeliveryNote[],
@@ -741,6 +772,8 @@ const FacturationTab = () => {
     setForm(blankForm);
     setInvoiceImageFile(null);
     setInvoiceImagePreview("");
+    setManualTotal(null);
+    setScanError(false);
     setHasAppointment(false);
     setEditingId(null);
   };
@@ -757,6 +790,9 @@ const FacturationTab = () => {
     setHasAppointment(!!inv.appointmentDate);
     setInvoiceImagePreview(inv.invoiceImageUrl || "");
     setInvoiceImageFile(null);
+    // Detect a previously-overridden total (differs from HT + TVA)
+    setManualTotal(Math.abs((inv.total || 0) - ((inv.subtotal || 0) + (inv.tvaAmount || 0))) > 0.01 ? inv.total : null);
+    setScanError(false);
     setShowDetailModal(false);
     setShowCreateModal(true);
   };
@@ -769,11 +805,18 @@ const FacturationTab = () => {
     if (!file) return;
     setInvoiceImageFile(file);
     setInvoiceImagePreview(URL.createObjectURL(file));
+    setScanError(false);
   };
 
   const handleSave = async () => {
     if (!form.invoiceNumber || !form.invoiceDate || form.selectedBlIds.length === 0) {
       dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "N° Facture, date et au moins un BL sont requis" } });
+      return;
+    }
+    // Scan of the invoice is mandatory on creation
+    if (!invoiceImageFile && !form.invoiceImageUrl) {
+      setScanError(true);
+      dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "Le scan de la facture est obligatoire" } });
       return;
     }
     setIsLoading(true);
@@ -784,6 +827,8 @@ const FacturationTab = () => {
         const url = await uploadFile(BUCKETS.INVOICES, `fuel-invoice-${id}-${Date.now()}`, invoiceImageFile);
         if (url) imageUrl = url;
       }
+      // Effective total = manual override when set, otherwise HT + TVA
+      const effectiveTotal = manualTotal !== null ? manualTotal : totals.total;
 
       if (editingId) {
         const existing = fuelInvoices.find((f) => f.id === editingId)!;
@@ -792,7 +837,7 @@ const FacturationTab = () => {
           invoiceNumber: form.invoiceNumber, invoiceDate: form.invoiceDate, creationDate: form.creationDate,
           receptionDate: form.receptionDate || undefined, deliveryNoteIds: form.selectedBlIds,
           tvaActive: form.tvaActive, tvaRate: form.tvaRate, subtotal: totals.subtotal, tvaAmount: totals.tvaAmount,
-          total: totals.total, rest: Math.max(0, totals.total - existing.amountPaid),
+          total: effectiveTotal, rest: Math.max(0, effectiveTotal - existing.amountPaid),
           appointmentDate: hasAppointment ? form.appointmentDate || undefined : undefined,
           appointmentAmount: hasAppointment ? form.appointmentAmount : undefined,
           appointmentNotes: hasAppointment ? form.appointmentNotes || undefined : undefined,
@@ -805,7 +850,7 @@ const FacturationTab = () => {
           id: newId(), invoiceNumber: form.invoiceNumber, invoiceDate: form.invoiceDate, creationDate: form.creationDate,
           receptionDate: form.receptionDate || undefined, deliveryNoteIds: form.selectedBlIds,
           tvaActive: form.tvaActive, tvaRate: form.tvaRate, subtotal: totals.subtotal, tvaAmount: totals.tvaAmount,
-          total: totals.total, amountPaid: 0, rest: totals.total, status: "Non Payé",
+          total: effectiveTotal, amountPaid: 0, rest: effectiveTotal, status: "Non Payé",
           appointmentDate: hasAppointment ? form.appointmentDate || undefined : undefined,
           appointmentAmount: hasAppointment ? form.appointmentAmount : undefined,
           appointmentNotes: hasAppointment ? form.appointmentNotes || undefined : undefined,
@@ -926,7 +971,7 @@ const FacturationTab = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">N° Facture *</label><input type="text" value={form.invoiceNumber} onChange={(e) => setForm({ ...form, invoiceNumber: e.target.value })} className="input-field h-11 text-xs font-black uppercase border-slate-200" placeholder="Ex: FAC-2026-001" /></div>
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date facture *</label><input type="date" value={form.invoiceDate} onChange={(e) => setForm({ ...form, invoiceDate: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
-                    <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de création *</label><input type="date" value={form.creationDate} onChange={(e) => setForm({ ...form, creationDate: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
+                    <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de création <span className="text-slate-300 normal-case text-[8px]">(Auto)</span></label><input type="date" value={form.creationDate} readOnly disabled title="La date de création est automatique et non modifiable" className="input-field h-11 text-xs font-black border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed" /></div>
                     <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de réception</label><input type="date" value={form.receptionDate} onChange={(e) => setForm({ ...form, receptionDate: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
                   </div>
                 </section>
@@ -999,7 +1044,26 @@ const FacturationTab = () => {
                       <input type="number" disabled={!form.tvaActive} value={form.tvaRate} onChange={(e) => setForm({ ...form, tvaRate: parseFloat(e.target.value) || 0 })} className="w-20 h-9 text-center text-xs font-black border border-slate-200 rounded-lg disabled:opacity-40" />
                     </div>
                     <div className="flex justify-between text-xs font-black text-slate-600"><span>TVA ({form.tvaRate}%)</span><span>{totals.tvaAmount.toLocaleString()} DA</span></div>
-                    <div className="flex justify-between text-lg font-black text-[#003087] border-t border-slate-200 pt-3"><span>TOTAL TTC</span><span>{totals.total.toLocaleString()} DA</span></div>
+                    <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-3">
+                      <div className="flex flex-col">
+                        <span className="text-lg font-black text-[#003087]">TOTAL TTC</span>
+                        {manualTotal !== null && <span className="text-[8px] font-black text-amber-600 uppercase tracking-widest">Total modifié manuellement</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={manualTotal !== null ? manualTotal : Math.round(totals.total * 100) / 100}
+                          onChange={(e) => setManualTotal(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+                          className="w-40 bg-white border border-slate-200 rounded-xl px-3 py-2 text-right text-lg font-black text-[#003087] focus:outline-none focus:border-[#003087]"
+                          title="Total modifiable manuellement"
+                        />
+                        <span className="text-[10px] text-slate-400 font-black">DA</span>
+                        {manualTotal !== null && (
+                          <button type="button" onClick={() => setManualTotal(null)} title="Recalculer automatiquement" className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-lg text-[8px] font-black uppercase tracking-widest">Auto</button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </section>
 
@@ -1018,11 +1082,14 @@ const FacturationTab = () => {
                   )}
                 </section>
 
-                {/* Section 5 — Image */}
-                <section className="space-y-4">
-                  <h4 className="text-[10px] font-black text-[#003087] uppercase tracking-[0.25em] border-b border-slate-100 pb-3">5. Image de la facture</h4>
+                {/* Section 5 — Image (mandatory scan) */}
+                <section className={cn("space-y-4 p-5 border-2 rounded-2xl", scanError ? "border-red-300 bg-red-50/30" : "border-slate-100 bg-white")}>
+                  <h4 className={cn("text-[10px] font-black uppercase tracking-[0.25em] border-b pb-3 flex items-center gap-2", scanError ? "text-red-600 border-red-100" : "text-[#003087] border-slate-100")}>
+                    <Camera className="w-4 h-4" /> 5. Scanner la facture *
+                  </h4>
+                  {scanError && <p className="text-[10px] font-black text-red-600 uppercase">Le scan de la facture est obligatoire pour enregistrer.</p>}
                   <div className="flex items-center gap-4">
-                    <label className="px-5 py-3 bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2 cursor-pointer hover:bg-slate-100">
+                    <label className={cn("px-5 py-3 border-2 border-dashed rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 cursor-pointer", scanError ? "bg-red-50 border-red-300 text-red-600" : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100")}>
                       <Camera className="w-4 h-4" /> Ajouter photo de la facture
                       <input type="file" className="hidden" accept="image/*,application/pdf" onChange={handleImageChange} />
                     </label>
@@ -1140,6 +1207,7 @@ const PaiementsTab = () => {
   const [form, setForm] = useState(blankForm);
   const [receiptImageFile, setReceiptImageFile] = useState<File | null>(null);
   const [receiptImagePreview, setReceiptImagePreview] = useState("");
+  const [scanError, setScanError] = useState(false);
 
   const selectedInvoices = useMemo(
     () => form.selectedInvoiceIds.map((id) => fuelInvoices.find((f) => f.id === id)).filter(Boolean) as FuelInvoice[],
@@ -1164,13 +1232,14 @@ const PaiementsTab = () => {
     return fuelInvoices.filter((f) => f.status !== "Payé" && !form.selectedInvoiceIds.includes(f.id) && (f.invoiceNumber.toLowerCase().includes(term) || f.id.toLowerCase().includes(term)));
   }, [fuelInvoices, invSearchTerm, form.selectedInvoiceIds]);
 
-  const resetForm = () => { setForm(blankForm); setReceiptImageFile(null); setReceiptImagePreview(""); setEditingId(null); };
+  const resetForm = () => { setForm(blankForm); setReceiptImageFile(null); setReceiptImagePreview(""); setScanError(false); setEditingId(null); };
   const openCreate = () => { resetForm(); setShowCreateModal(true); };
   const openEdit = (r: FuelReceipt) => {
     setEditingId(r.id);
     setForm({ receiptNumber: r.receiptNumber, receiptDate: r.receiptDate, creationDate: r.creationDate, selectedInvoiceIds: [...r.invoiceIds], amountPaid: r.amountPaid, isDebtPayment: r.isDebtPayment, receiptImageUrl: r.receiptImageUrl || "", notes: r.notes || "" });
     setReceiptImagePreview(r.receiptImageUrl || "");
     setReceiptImageFile(null);
+    setScanError(false);
     setShowDetailModal(false);
     setShowCreateModal(true);
   };
@@ -1183,6 +1252,7 @@ const PaiementsTab = () => {
     if (!file) return;
     setReceiptImageFile(file);
     setReceiptImagePreview(URL.createObjectURL(file));
+    setScanError(false);
   };
 
   // Mark linked invoices Payé when fully covered
@@ -1198,6 +1268,12 @@ const PaiementsTab = () => {
   const handleSave = async () => {
     if (!form.receiptNumber) {
       dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "Le N° de reçu est requis" } });
+      return;
+    }
+    // Scan of the payment receipt is mandatory on creation
+    if (!receiptImageFile && !form.receiptImageUrl) {
+      setScanError(true);
+      dispatch({ type: "ADD_TOAST", payload: { type: "error", message: "Le scan du reçu de paiement est obligatoire" } });
       return;
     }
     setIsLoading(true);
@@ -1336,7 +1412,7 @@ const PaiementsTab = () => {
                 <section className="grid grid-cols-3 gap-4">
                   <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">N° Reçu *</label><input type="text" value={form.receiptNumber} onChange={(e) => setForm({ ...form, receiptNumber: e.target.value })} className="input-field h-11 text-xs font-black uppercase border-slate-200" placeholder="Ex: REC-001" /></div>
                   <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date du reçu *</label><input type="date" value={form.receiptDate} onChange={(e) => setForm({ ...form, receiptDate: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
-                  <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de création *</label><input type="date" value={form.creationDate} onChange={(e) => setForm({ ...form, creationDate: e.target.value })} className="input-field h-11 text-xs font-black border-slate-200" /></div>
+                  <div className="space-y-1"><label className="text-[9px] font-black text-slate-500 uppercase ml-1">Date de création <span className="text-slate-300 normal-case text-[8px]">(Auto)</span></label><input type="date" value={form.creationDate} readOnly disabled title="La date de création est automatique et non modifiable" className="input-field h-11 text-xs font-black border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed" /></div>
                 </section>
 
                 {/* Section 2 — debt toggle + invoices */}
@@ -1390,11 +1466,14 @@ const PaiementsTab = () => {
                   )}
                 </section>
 
-                {/* Section 4 — image */}
-                <section className="space-y-3">
-                  <h4 className="text-[10px] font-black text-[#003087] uppercase tracking-[0.25em] border-b border-slate-100 pb-3">Image du reçu</h4>
+                {/* Section 4 — image (mandatory scan) */}
+                <section className={cn("space-y-3 p-5 border-2 rounded-2xl", scanError ? "border-red-300 bg-red-50/30" : "border-slate-100 bg-white")}>
+                  <h4 className={cn("text-[10px] font-black uppercase tracking-[0.25em] border-b pb-3 flex items-center gap-2", scanError ? "text-red-600 border-red-100" : "text-[#003087] border-slate-100")}>
+                    <Camera className="w-4 h-4" /> Scanner le reçu de paiement *
+                  </h4>
+                  {scanError && <p className="text-[10px] font-black text-red-600 uppercase">Le scan du reçu est obligatoire pour enregistrer.</p>}
                   <div className="flex items-center gap-4">
-                    <label className="px-5 py-3 bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2 cursor-pointer hover:bg-slate-100">
+                    <label className={cn("px-5 py-3 border-2 border-dashed rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 cursor-pointer", scanError ? "bg-red-50 border-red-300 text-red-600" : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100")}>
                       <Upload className="w-4 h-4" /> Ajouter photo du reçu
                       <input type="file" className="hidden" accept="image/*,application/pdf" onChange={handleImageChange} />
                     </label>

@@ -102,6 +102,40 @@ export function formatNumber(num: number, locale: string = 'fr-DZ'): string {
 }
 
 /**
+ * Retourne la date/heure locale courante au format attendu par un input
+ * `datetime-local` (`YYYY-MM-DDTHH:mm`), en tenant compte du fuseau horaire
+ * local (contrairement à `toISOString()` qui renvoie l'heure UTC).
+ */
+export function nowDatetimeLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Convertit une date ISO/Date en chaîne `datetime-local` locale
+ * (`YYYY-MM-DDTHH:mm`) pour préremplir un input. Renvoie la date courante
+ * si la valeur est invalide.
+ */
+export function toDatetimeLocal(date?: Date | string | null): string {
+  if (!date) return nowDatetimeLocal();
+  const d = typeof date === "string" ? new Date(date) : date;
+  if (isNaN(d.getTime())) return nowDatetimeLocal();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Convertit une valeur d'input `datetime-local` en chaîne ISO. Si la valeur
+ * est vide/invalide, renvoie la date/heure courante en ISO.
+ */
+export function datetimeLocalToISO(value?: string | null): string {
+  if (!value) return new Date().toISOString();
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+}
+
+/**
  * Formate une date en français
  * @param date Date à formater
  * @returns Chaîne formatée exemple: "19 mai 2026"
