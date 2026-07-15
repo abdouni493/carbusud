@@ -752,6 +752,8 @@ const ProductDetailsModal = ({ isOpen, product, onClose }: any) => {
 // Component: Product Card Menu (Controls dropdown visibility at page level)
 const ProductCardMenu = ({ product, isOpen, setIsOpen, onEdit, onDelete, onDetails, onAdjustStock }: any) => {
   const perm = useModulePermission('Produits');
+  const { currentUserRole } = useAppState();
+  const isAdmin = currentUserRole === 'admin';
   return (
     <div className="relative">
       <motion.button 
@@ -789,7 +791,7 @@ const ProductCardMenu = ({ product, isOpen, setIsOpen, onEdit, onDelete, onDetai
                 <Edit2 className="w-4 h-4 text-blue-500" /> Modifier
               </button>
               )}
-              {perm.modifier && (
+              {isAdmin && (
               <button
                 onClick={() => { onAdjustStock(); setIsOpen(null); }}
                 className="w-full px-4 py-3 text-left text-xs font-bold text-blue-600 hover:bg-blue-50 flex items-center gap-3 transition-colors italic"
